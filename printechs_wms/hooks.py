@@ -1,8 +1,8 @@
 app_name = "printechs_wms"
 app_title = "Printechs WMS"
-app_publisher = "Printechs"
+app_publisher = "printechs"
 app_description = "Printechs WMS"
-app_email = "thomas@printechs.com"
+app_email = "info@printechs.com"
 app_license = "mit"
 
 # Apps
@@ -241,4 +241,9 @@ app_license = "mit"
 # default_log_clearing_doctypes = {
 # 	"Logging DocType Name": 30  # days to retain logs
 # }
+
+# Translation
+# ------------
+# List of apps whose translatable strings should be excluded from this app's translations.
+# ignore_translatable_strings_from = []
 

@@ -1,7 +1,7 @@
 [project]
 name = "printechs_wms"
 authors = [
-    { name = "Printechs", email = "thomas@printechs.com"}
+    { name = "printechs", email = "info@printechs.com"}
 ]
 description = "Printechs WMS"
 requires-python = ">=3.10"
