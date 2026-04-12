@@ -1,0 +1,166 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "hash",
+ "creation": "2026-01-29 23:38:13.700478",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "item_code",
+  "po_item_reference",
+  "shipped_qty",
+  "received_qty",
+  "unit_cost",
+  "extended_cost",
+  "uom",
+  "carton_id",
+  "carton_status",
+  "inbound_session",
+  "receiving_status",
+  "sb_lock",
+  "opened_by",
+  "opened_on",
+  "locked_by",
+  "locked_on",
+  "remarks"
+ ],
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item Code",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "po_item_reference",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "PO Item Reference"
+  },
+  {
+   "default": "0",
+   "fieldname": "shipped_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Shipped Qty",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "received_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Recvd Qty"
+  },
+  {
+   "default": "0",
+   "fieldname": "unit_cost",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Unit Cost"
+  },
+  {
+   "default": "0",
+   "fieldname": "extended_cost",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Extended Cost",
+   "read_only": 1
+  },
+  {
+   "fieldname": "uom",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "UOM",
+   "options": "UOM"
+  },
+  {
+   "fieldname": "carton_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Carton ID"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "carton_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Carton Status",
+   "options": "Pending\nReceiving\nReceived\nPutaway Pending\nPutaway In Progress\nPutaway Completed\nCancelled"
+  },
+  {
+   "fieldname": "inbound_session",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Inbound Session"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "receiving_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Receiving Status",
+   "options": "Pending\nReceiving\nReceived\nShort\nOver\nCancelled"
+  },
+  {
+   "fieldname": "sb_lock",
+   "fieldtype": "Section Break",
+   "label": "Lock/Trace"
+  },
+  {
+   "fieldname": "opened_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Opened By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "opened_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Opened On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "locked_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Locked By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "locked_on",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Locked On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-02-10 16:03:08.924687",
+ "modified_by": "Administrator",
+ "module": "Printechs WMS",
+ "name": "WMS ASN Item",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

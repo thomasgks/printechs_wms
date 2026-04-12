@@ -1,0 +1,282 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "autoname": "naming_series:",
+ "creation": "2026-02-12 09:20:08.835937",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_8spu",
+  "naming_series",
+  "expected_arrival",
+  "supplier",
+  "shipment_date",
+  "purchase_order",
+  "status",
+  "currency",
+  "column_break_yrht",
+  "shipment_type",
+  "airway_bill",
+  "total_ctn",
+  "total_shipped_qty",
+  "opened_by",
+  "opened_on",
+  "conversion_rate",
+  "section_break_ugit",
+  "items",
+  "section_break_mqio",
+  "total_amount",
+  "custom_is_locked",
+  "wms_export_status",
+  "locked_by",
+  "locked_on",
+  "amended_from",
+  "wms_reserved_by",
+  "wms_reserved_on",
+  "wms_exported_by",
+  "wms_exported_on",
+  "wms_ref",
+  "purchase_receipt",
+  "total_received_qty",
+  "total_amount_sar",
+  "default_receiving_warehouse_code",
+  "default_receiving_warehouse_name",
+  "tab_2_tab",
+  "remarks"
+ ],
+ "fields": [
+  {
+   "default": "ASN-.####",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Naming Series",
+   "options": "ASN-.####",
+   "reqd": 1
+  },
+  {
+   "fieldname": "supplier",
+   "fieldtype": "Link",
+   "label": "Supplier",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "purchase_order",
+   "fieldtype": "Link",
+   "label": "Purchase Order",
+   "options": "Purchase Order"
+  },
+  {
+   "fieldname": "expected_arrival",
+   "fieldtype": "Date",
+   "label": "Expected Arrival"
+  },
+  {
+   "fieldname": "shipment_date",
+   "fieldtype": "Date",
+   "label": "Shipment Date"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Draft\nOpen\nCompleted\nCancelled"
+  },
+  {
+   "fieldname": "shipment_type",
+   "fieldtype": "Data",
+   "label": "Shipment Type"
+  },
+  {
+   "fieldname": "airway_bill",
+   "fieldtype": "Data",
+   "label": "Airway Bill"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_ctn",
+   "fieldtype": "Int",
+   "label": "Total CTN"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_shipped_qty",
+   "fieldtype": "Float",
+   "label": "Total Shipped Qty"
+  },
+  {
+   "fieldname": "opened_by",
+   "fieldtype": "Link",
+   "label": "Opened By",
+   "options": "User"
+  },
+  {
+   "fieldname": "opened_on",
+   "fieldtype": "Datetime",
+   "label": "Opened On"
+  },
+  {
+   "fieldname": "locked_by",
+   "fieldtype": "Link",
+   "label": "Locked By",
+   "options": "User"
+  },
+  {
+   "fieldname": "locked_on",
+   "fieldtype": "Datetime",
+   "label": "Locked On"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "WMS ASN"
+  },
+  {
+   "default": "0",
+   "fieldname": "custom_is_locked",
+   "fieldtype": "Check",
+   "label": "Custom Is Locked"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "wms_export_status",
+   "fieldtype": "Select",
+   "label": "WMS Export Status",
+   "options": "Pending\nReserved\nExported"
+  },
+  {
+   "fieldname": "wms_reserved_by",
+   "fieldtype": "Data",
+   "label": "WMS Reserved By"
+  },
+  {
+   "fieldname": "wms_reserved_on",
+   "fieldtype": "Datetime",
+   "label": "WMS Reserved On"
+  },
+  {
+   "fieldname": "wms_exported_by",
+   "fieldtype": "Data",
+   "label": "WMS Exported By"
+  },
+  {
+   "fieldname": "wms_exported_on",
+   "fieldtype": "Datetime",
+   "label": "WMS Exported On"
+  },
+  {
+   "fieldname": "wms_ref",
+   "fieldtype": "Data",
+   "label": "WMS Ref"
+  },
+  {
+   "fieldname": "purchase_receipt",
+   "fieldtype": "Link",
+   "label": "Purchase Receipt",
+   "options": "Purchase Receipt"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_received_qty",
+   "fieldtype": "Float",
+   "label": "Total Received Qty"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_amount",
+   "fieldtype": "Currency",
+   "label": "Total Amount"
+  },
+  {
+   "fieldname": "currency",
+   "fieldtype": "Link",
+   "label": "Currency",
+   "options": "Currency"
+  },
+  {
+   "default": "0",
+   "fieldname": "conversion_rate",
+   "fieldtype": "Float",
+   "label": "Conversion Rate"
+  },
+  {
+   "default": "0",
+   "fieldname": "total_amount_sar",
+   "fieldtype": "Currency",
+   "label": "Total Amount (SAR)"
+  },
+  {
+   "fieldname": "default_receiving_warehouse_name",
+   "fieldtype": "Data",
+   "label": "Default Receiving Warehouse Name"
+  },
+  {
+   "fieldname": "default_receiving_warehouse_code",
+   "fieldtype": "Data",
+   "label": "Default Receiving Warehouse Code"
+  },
+  {
+   "fieldname": "section_break_8spu",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_yrht",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_ugit",
+   "fieldtype": "Section Break",
+   "label": "Item Details"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Item Lines",
+   "options": "WMS ASN Item"
+  },
+  {
+   "fieldname": "section_break_mqio",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "tab_2_tab",
+   "fieldtype": "Tab Break",
+   "label": "Tab 2"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-03-02 02:02:24.423435",
+ "modified_by": "Administrator",
+ "module": "Printechs WMS",
+ "name": "WMS ASN",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

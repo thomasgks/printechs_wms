@@ -1,0 +1,118 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "naming_series:",
+ "creation": "2026-02-11 19:20:42.846813",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "company",
+  "posting_date",
+  "warehouse",
+  "warehouse_code",
+  "status",
+  "sync_status",
+  "external_ref",
+  "erp_posting_ref",
+  "results"
+ ],
+ "fields": [
+  {
+   "default": "CC-.YYYYMMDD.-.####",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Naming Series",
+   "options": "CC-.YYYYMMDD.-.####"
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "default": "Today",
+   "fieldname": "posting_date",
+   "fieldtype": "Date",
+   "label": "Posting Date"
+  },
+  {
+   "fieldname": "warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "ERP Warehouse",
+   "options": "Warehouse",
+   "reqd": 1
+  },
+  {
+   "fieldname": "warehouse_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Warehouse Code",
+   "reqd": 1
+  },
+  {
+   "default": "Open",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+   "options": "Open\nIn Progress\nCompleted\nValidated\nPosted\nClosed\nCancelled"
+  },
+  {
+   "default": "Not Synced",
+   "fieldname": "sync_status",
+   "fieldtype": "Select",
+   "label": "Sync Status",
+   "options": "Not Synced\nSynced\nFailed"
+  },
+  {
+   "fieldname": "external_ref",
+   "fieldtype": "Data",
+   "label": "External Ref"
+  },
+  {
+   "fieldname": "erp_posting_ref",
+   "fieldtype": "Data",
+   "label": "ERP Posting Ref"
+  },
+  {
+   "fieldname": "results",
+   "fieldtype": "Table",
+   "label": "Results",
+   "options": "WMS Cycle Count Result"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-02-12 23:23:15.859207",
+ "modified_by": "Administrator",
+ "module": "Printechs WMS",
+ "name": "WMS Cycle Count Task",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

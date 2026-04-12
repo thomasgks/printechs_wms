@@ -1,0 +1,71 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-02-12 19:16:24.356591",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "item_code",
+  "bin_location",
+  "carton_id",
+  "total_counted_qty",
+  "total_system_qty",
+  "total_delta_qty"
+ ],
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "bin_location",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Bin Location",
+   "options": "WMS Bin Location",
+   "reqd": 1
+  },
+  {
+   "fieldname": "total_counted_qty",
+   "fieldtype": "Float",
+   "label": "Total Counted Qty"
+  },
+  {
+   "fieldname": "total_system_qty",
+   "fieldtype": "Float",
+   "label": "Total System Qty"
+  },
+  {
+   "fieldname": "total_delta_qty",
+   "fieldtype": "Float",
+   "label": "Total Delta Qty"
+  },
+  {
+   "fieldname": "carton_id",
+   "fieldtype": "Data",
+   "label": "Carton ID",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-02-22 01:39:44.123208",
+ "modified_by": "Administrator",
+ "module": "Printechs WMS",
+ "name": "WMS Cycle Count Batch Summary",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
