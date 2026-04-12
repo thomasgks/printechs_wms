@@ -145,6 +145,18 @@ app_license = "mit"
 # 	}
 # }
 
+
+doc_events = {
+    "Item": {
+        "before_save": "printechs_wms.api.item.update_custom_wms_modified"
+    }
+}
+
+doctype_js = {
+  "WMS Transfer Order": "public/js/wms_transfer_order.js"
+}
+
+
 # Scheduled Tasks
 # ---------------
 

@@ -1,0 +1,28 @@
+{
+ "add_total_row": 0,
+ "add_translate_data": 0,
+ "columns": [],
+ "creation": "2026-02-26 10:48:05.674462",
+ "disabled": 0,
+ "docstatus": 0,
+ "doctype": "Report",
+ "filters": [],
+ "idx": 0,
+ "is_standard": "Yes",
+ "letter_head": null,
+ "modified": "2026-02-26 10:48:05.674462",
+ "modified_by": "Administrator",
+ "module": "Printechs WMS",
+ "name": "WMS Stock Balance Report",
+ "owner": "Administrator",
+ "prepared_report": 0,
+ "ref_doctype": "WMS Stock Balance",
+ "report_name": "WMS Stock Balance Report",
+ "report_type": "Script Report",
+ "roles": [
+  {
+   "role": "System Manager"
+  }
+ ],
+ "timeout": 0
+}

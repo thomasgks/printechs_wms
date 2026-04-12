@@ -1,0 +1,111 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "naming_series:",
+ "creation": "2026-02-28 17:27:37.222267",
+ "description": "Relocation session header for moving stock between bins/cartons.",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "warehouse",
+  "status",
+  "remarks",
+  "section_break_1",
+  "external_ref",
+  "lines",
+  "session_uuid",
+  "posting_date"
+ ],
+ "fields": [
+  {
+   "default": "WMS-RELOC-.YYYY.-",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Naming Series",
+   "options": "WMS-RELOC-.YYYY.-",
+   "reqd": 1
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Draft\nSubmitted\nPosted\nCancelled",
+   "reqd": 1
+  },
+  {
+   "fieldname": "warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Warehouse",
+   "options": "Warehouse",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_1",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "external_ref",
+   "fieldtype": "Data",
+   "label": "External Ref"
+  },
+  {
+   "fieldname": "lines",
+   "fieldtype": "Table",
+   "label": "Relocation Lines",
+   "options": "WMS Relocation Line",
+   "reqd": 1
+  },
+  {
+   "fieldname": "session_uuid",
+   "fieldtype": "Data",
+   "label": "Session UUID",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "posting_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Posting Date",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-03-02 02:29:25.409203",
+ "modified_by": "Administrator",
+ "module": "Printechs WMS",
+ "name": "WMS Relocation Session",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

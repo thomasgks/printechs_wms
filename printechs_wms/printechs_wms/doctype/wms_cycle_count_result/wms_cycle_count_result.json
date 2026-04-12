@@ -1,0 +1,94 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-02-11 19:20:42.373930",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "item_code",
+  "bin_location",
+  "system_qty",
+  "counted_qty",
+  "delta_qty",
+  "has_discrepancy",
+  "carton_id",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "bin_location",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Bin Location",
+   "options": "WMS Bin Location",
+   "reqd": 1
+  },
+  {
+   "fieldname": "system_qty",
+   "fieldtype": "Float",
+   "label": "System Qty"
+  },
+  {
+   "fieldname": "counted_qty",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Counted Qty",
+   "reqd": 1
+  },
+  {
+   "fieldname": "delta_qty",
+   "fieldtype": "Float",
+   "label": "Delta Qty"
+  },
+  {
+   "default": "0",
+   "fieldname": "has_discrepancy",
+   "fieldtype": "Check",
+   "label": "Has Discrepancy"
+  },
+  {
+   "fieldname": "carton_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_preview": 1,
+   "label": "Carton ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "WMS Cycle Count Result",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-02-21 11:57:05.182441",
+ "modified_by": "Administrator",
+ "module": "Printechs WMS",
+ "name": "WMS Cycle Count Result",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

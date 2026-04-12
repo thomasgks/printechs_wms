@@ -1,0 +1,132 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "hash",
+ "creation": "2026-01-29 12:02:31.925047",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "posting_datetime",
+  "item_code",
+  "carton",
+  "qty_change",
+  "voucher_name",
+  "wms_txn_id",
+  "column_break_kxvv",
+  "company",
+  "location",
+  "event_type",
+  "voucher_doctype",
+  "qty_after",
+  "remarks"
+ ],
+ "fields": [
+  {
+   "fieldname": "posting_datetime",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Posting Datetime",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "item_code",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Item",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "location",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Bin Location",
+   "options": "WMS Bin Location",
+   "reqd": 1
+  },
+  {
+   "fieldname": "carton",
+   "fieldtype": "Data",
+   "label": "Carton"
+  },
+  {
+   "fieldname": "qty_change",
+   "fieldtype": "Float",
+   "label": "Qty Change",
+   "reqd": 1
+  },
+  {
+   "fieldname": "qty_after",
+   "fieldtype": "Float",
+   "label": "Qty After"
+  },
+  {
+   "fieldname": "event_type",
+   "fieldtype": "Select",
+   "label": "Event Type",
+   "options": "Receive\nPutaway\nTransfer\nPick\nCycleCount\nAdjust",
+   "reqd": 1
+  },
+  {
+   "fieldname": "voucher_doctype",
+   "fieldtype": "Data",
+   "label": "Voucher Doctype"
+  },
+  {
+   "fieldname": "voucher_name",
+   "fieldtype": "Data",
+   "label": "Voucher Name"
+  },
+  {
+   "fieldname": "wms_txn_id",
+   "fieldtype": "Data",
+   "label": "WMS Txn ID",
+   "unique": 1
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "column_break_kxvv",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-03-02 02:27:57.024775",
+ "modified_by": "Administrator",
+ "module": "Printechs WMS",
+ "name": "WMS Stock Ledger Entry",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

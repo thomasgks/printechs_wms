@@ -1,0 +1,151 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "naming_series:",
+ "creation": "2026-01-31 14:32:58.068821",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "to_title",
+  "asn",
+  "from_warehouse_code",
+  "from_warehouse",
+  "prepared_by",
+  "required_date",
+  "status",
+  "total_allocated_qty",
+  "items_count",
+  "section_items",
+  "items",
+  "remarks",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "default": "WMS-TO-.#####",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Naming Series",
+   "options": "WMS-TO-.#####",
+   "reqd": 1
+  },
+  {
+   "fieldname": "to_title",
+   "fieldtype": "Data",
+   "label": "TO Title"
+  },
+  {
+   "fieldname": "asn",
+   "fieldtype": "Link",
+   "label": "ASN",
+   "options": "WMS ASN"
+  },
+  {
+   "fieldname": "from_warehouse_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "From Warehouse Code",
+   "no_copy": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "from_warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "From Warehouse",
+   "options": "Warehouse",
+   "reqd": 1
+  },
+  {
+   "fieldname": "prepared_by",
+   "fieldtype": "Link",
+   "label": "Prepared By",
+   "options": "User"
+  },
+  {
+   "fieldname": "required_date",
+   "fieldtype": "Date",
+   "label": "Required Date"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "\nDraft\nReleased\nPicking\nPacked\nDispatched\nCompleted\nCancelled",
+   "reqd": 1
+  },
+  {
+   "fieldname": "total_allocated_qty",
+   "fieldtype": "Float",
+   "label": "Total Allocated Qty",
+   "read_only": 1
+  },
+  {
+   "fieldname": "items_count",
+   "fieldtype": "Int",
+   "label": "Items Count",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_items",
+   "fieldtype": "Section Break",
+   "label": "Items"
+  },
+  {
+   "fieldname": "items",
+   "fieldtype": "Table",
+   "label": "Item Lines",
+   "options": "WMS Transfer Order Item"
+  },
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Small Text",
+   "label": "Remarks"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "WMS Transfer Order",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-02-04 11:16:04.311913",
+ "modified_by": "Administrator",
+ "module": "Printechs WMS",
+ "name": "WMS Transfer Order",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
