@@ -1,0 +1,59 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "hash",
+ "creation": "2026-04-12 15:42:00.044807",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "wms_warehouse_code",
+  "erp_warehouse"
+ ],
+ "fields": [
+  {
+   "fieldname": "wms_warehouse_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "WMS Warehouse Code",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "erp_warehouse",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "ERP Warehouse",
+   "options": "Warehouse",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-12 15:47:06.306292",
+ "modified_by": "Administrator",
+ "module": "Printechs WMS",
+ "name": "WMS Warehouse Map",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

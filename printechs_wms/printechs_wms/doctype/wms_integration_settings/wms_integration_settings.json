@@ -1,0 +1,90 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "prompt",
+ "creation": "2026-04-12 15:41:59.222062",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "wms_base_url",
+  "wms_api_token",
+  "default_receiving_warehouse",
+  "default_source_warehouse",
+  "default_target_warehouse",
+  "enable_auto_create_pr_draft",
+  "enable_auto_create_stock_entry_draft"
+ ],
+ "fields": [
+  {
+   "fieldname": "wms_base_url",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "WMS Base URL",
+   "reqd": 1
+  },
+  {
+   "fieldname": "wms_api_token",
+   "fieldtype": "Password",
+   "label": "WMS API Token"
+  },
+  {
+   "fieldname": "default_receiving_warehouse",
+   "fieldtype": "Link",
+   "label": "Default Receiving Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "default_source_warehouse",
+   "fieldtype": "Link",
+   "label": "Default Source Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "fieldname": "default_target_warehouse",
+   "fieldtype": "Link",
+   "label": "Default Target Warehouse",
+   "options": "Warehouse"
+  },
+  {
+   "default": "1",
+   "fieldname": "enable_auto_create_pr_draft",
+   "fieldtype": "Check",
+   "label": "Auto Create Purchase Receipt (Draft)"
+  },
+  {
+   "default": "1",
+   "fieldname": "enable_auto_create_stock_entry_draft",
+   "fieldtype": "Check",
+   "label": "Auto Create Stock Entry (Draft)"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-04-12 15:47:31.193293",
+ "modified_by": "Administrator",
+ "module": "Printechs WMS",
+ "name": "WMS Integration Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
