@@ -200,7 +200,7 @@
   "insert_after": "external_ref",
   "is_system_generated": 0,
   "is_virtual": 0,
-  "label": "Sync Stage.",
+  "label": "Sync Stage",
   "length": 0,
   "link_filters": null,
   "mandatory_depends_on": null,

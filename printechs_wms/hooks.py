@@ -264,6 +264,10 @@ fixtures = [
         "filters": [
             ["module", "=", "Printechs WMS"]
         ]
-    }
+    },
+    {"dt": "Workspace", "filters": [
+            ["module", "=", "Printechs WMS"]
+        ]}
+
 ]
 
