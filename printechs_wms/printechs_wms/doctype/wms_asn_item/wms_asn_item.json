@@ -61,7 +61,7 @@
    "fieldname": "unit_cost",
    "fieldtype": "Currency",
    "in_list_view": 1,
-   "label": "Unit Cost"
+   "label": "Unit Cost."
   },
   {
    "default": "0",
@@ -151,7 +151,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-02-10 16:03:08.924687",
+ "modified": "2026-04-15 11:22:14.700458",
  "modified_by": "Administrator",
  "module": "Printechs WMS",
  "name": "WMS ASN Item",
