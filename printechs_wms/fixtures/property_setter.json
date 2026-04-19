@@ -80,36 +80,20 @@
   "value": "1"
  },
  {
-  "default_value": null,
+  "default_value": "CC-.YYYY.MM.DD.-.####",
   "doc_type": "WMS Cycle Count Task",
   "docstatus": 0,
   "doctype": "Property Setter",
   "doctype_or_field": "DocField",
   "field_name": "naming_series",
   "is_system_generated": 1,
-  "modified": "2026-04-19 12:06:59.235381",
+  "modified": "2026-04-19 12:46:14.273967",
   "module": "Printechs WMS",
   "name": "WMS Cycle Count Task-naming_series-options",
   "property": "options",
   "property_type": "Text",
   "row_name": null,
-  "value": "CC-.YYYYMMDD.-.####"
- },
- {
-  "default_value": null,
-  "doc_type": "WMS Cycle Count Task",
-  "docstatus": 0,
-  "doctype": "Property Setter",
-  "doctype_or_field": "DocField",
-  "field_name": "naming_series",
-  "is_system_generated": 1,
-  "modified": "2026-04-19 12:07:07.527500",
-  "module": "Printechs WMS",
-  "name": "WMS Cycle Count Task-naming_series-default",
-  "property": "default",
-  "property_type": "Text",
-  "row_name": null,
-  "value": "CC-.YYYYMMDD.-.####"
+  "value": "CC-.YYYY.MM.DD.-.####"
  },
  {
   "default_value": null,
@@ -286,5 +270,21 @@
   "property_type": "Text",
   "row_name": null,
   "value": "WMS-RELOC-.YYYY.-"
+ },
+ {
+  "default_value": "CC-.YYYY.MM.DD.-.####",
+  "doc_type": "WMS Cycle Count Task",
+  "docstatus": 0,
+  "doctype": "Property Setter",
+  "doctype_or_field": "DocField",
+  "field_name": "naming_series",
+  "is_system_generated": 0,
+  "modified": "2026-04-19 12:53:48.238962",
+  "module": "Printechs WMS",
+  "name": "WMS Cycle Count Task-naming_series-default",
+  "property": "default",
+  "property_type": "Text",
+  "row_name": null,
+  "value": "CC-.YYYY.MM.DD.-.####"
  }
 ]

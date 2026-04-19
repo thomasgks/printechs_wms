@@ -20,11 +20,11 @@
  ],
  "fields": [
   {
-   "default": "CC-.YYYYMMDD.-.####",
+   "default": "CC-.YYYY.MM.DD.-.####",
    "fieldname": "naming_series",
    "fieldtype": "Select",
    "label": "Naming Series",
-   "options": "CC-.YYYYMMDD.-.####"
+   "options": "CC-.YYYY.MM.DD.-.####"
   },
   {
    "fieldname": "company",
@@ -89,7 +89,7 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-12 15:49:16.780043",
+ "modified": "2026-04-19 12:40:54.417289",
  "modified_by": "Administrator",
  "module": "Printechs WMS",
  "name": "WMS Cycle Count Task",
