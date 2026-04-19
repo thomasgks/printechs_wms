@@ -267,7 +267,13 @@ fixtures = [
     },
     {"dt": "Workspace", "filters": [
             ["module", "=", "Printechs WMS"]
-        ]}
+        ]},
+    {
+        "dt": "Property Setter",
+        "filters": [
+            ["module", "=", "Printechs WMS"]
+        ]
+    }
 
 ]
 
