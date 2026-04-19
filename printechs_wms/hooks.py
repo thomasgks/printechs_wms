@@ -273,6 +273,18 @@ fixtures = [
         "filters": [
             ["module", "=", "Printechs WMS"]
         ]
+    },
+    {
+        "dt": "Client Script",
+        "filters": [
+            ["module", "=", "Printechs WMS"]
+        ]
+    },
+    {
+        "dt": "Server Script",
+        "filters": [
+            ["module", "=", "Printechs WMS"]
+        ]
     }
 
 ]
