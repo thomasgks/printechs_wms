@@ -1,11 +1,14 @@
 {
  "actions": [],
  "allow_rename": 1,
- "creation": "2026-04-12 15:42:01.216266",
+ "autoname": "naming_series:",
+ "creation": "2026-04-13 10:17:10.648035",
+ "custom": 1,
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
+  "naming_series",
   "company",
   "warehouse_code",
   "status",
@@ -19,6 +22,13 @@
   "summary"
  ],
  "fields": [
+  {
+   "default": "CCB-.YYYY.MM.DD.-.####",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Naming Series",
+   "options": "CCB-.YYYY.MM.DD.-.####"
+  },
   {
    "fieldname": "company",
    "fieldtype": "Link",
@@ -82,10 +92,11 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-12 15:46:33.730890",
+ "modified": "2026-04-19 12:53:01.687962",
  "modified_by": "Administrator",
  "module": "Printechs WMS",
  "name": "WMS Cycle Count Batch",
+ "naming_rule": "By \"Naming Series\" field",
  "owner": "Administrator",
  "permissions": [
   {
