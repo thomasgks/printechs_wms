@@ -17,14 +17,15 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
       - WMS ASN
       - WMS ASN Item
 
-    "Own name" support:
-      - Column 'name' in WMS ASN sheet is used as docname.
+    REQUIREMENT IMPLEMENTED:
+      - Excel column 'name' is used to populate ERPNext title
+      - ERPNext document name will follow normal naming series unless you explicitly set it
 
     Warehouse mapping supported:
       - default_receiving_warehouse (Warehouse docname)
       - default_receiving_warehouse_code (Warehouse.code)
 
-    Your Excel headers supported:
+    Excel headers supported:
       - default_receiving_warehouse_name   -> treated as default_receiving_warehouse
       - warehouse_code                     -> treated as default_receiving_warehouse_code
     """
@@ -54,7 +55,7 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
     asn_headers = _norm_headers(asn_rows[0])
     item_headers = _norm_headers(item_rows[0])
 
-    # Build items grouped by parent ASN name
+    # Build items grouped by parent ASN reference
     items_by_parent = {}
     for r in item_rows[1:]:
         if not _has_any_value(r):
@@ -76,23 +77,25 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
 
         d = dict(zip(asn_headers, r))
 
-        asn_name = _s(d.get("name"))
+        excel_name = _s(d.get("name"))      # Excel source value
         supplier = _s(d.get("supplier"))
 
-        if not asn_name:
-            errors.append({"name": "(blank)", "error": "Column 'name' is required in WMS ASN sheet (own name mode)"})
+        if not excel_name:
+            errors.append({
+                "name": "(blank)",
+                "error": "Column 'name' is required in WMS ASN sheet because it is used as Title"
+            })
             continue
+
         if not supplier:
-            errors.append({"name": asn_name, "error": "Supplier is required"})
+            errors.append({
+                "name": excel_name,
+                "error": "Supplier is required"
+            })
             continue
 
         try:
-            if frappe.db.exists(ASN_DT, asn_name):
-                errors.append({"name": asn_name, "error": "WMS ASN already exists"})
-                continue
-
             asn = frappe.new_doc(ASN_DT)
-            asn.name = asn_name  # own name
 
             # -----------------------------
             # HEADER FIELD MAPPING
@@ -117,7 +120,7 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
             # Shipment Type
             _set_any(asn, ["shipment_type"], d.get("shipment_type"))
 
-            # Currency / rate / totals (if fields exist)
+            # Currency / rate / totals
             _set_any(asn, ["currency"], d.get("currency"))
             _set_any(asn, ["conversion_rate"], d.get("conversion_rate"))
             _set_any(asn, ["total_shipped_qty"], d.get("total_shipped_qty"))
@@ -126,18 +129,21 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
             # Status
             _set_any(asn, ["status"], d.get("status") or "Draft")
 
-            # Title
-            _set_any(asn, ["asn_title", "title"], d.get("asn_title"))
+            # -------------------------------------------------------
+            # TITLE MAPPING: ERPNext title = Excel "name"
+            # -------------------------------------------------------
+            _set_any(asn, ["title", "asn_title"], excel_name)
+
+            # Optional: keep original Excel asn_title in another field only if needed
+            # If you want, uncomment below and map it to a custom field
+            # _set_any(asn, ["excel_asn_title"], d.get("asn_title"))
 
             # -----------------------------
             # DEFAULT RECEIVING WAREHOUSE (MANDATORY)
-            # Your Excel columns:
-            #   - default_receiving_warehouse_name
-            #   - warehouse_code
             # -----------------------------
             wh_link = _s(
                 d.get("default_receiving_warehouse")
-                or d.get("default_receiving_warehouse_name")  # <-- YOUR EXCEL
+                or d.get("default_receiving_warehouse_name")
                 or d.get("receiving_warehouse")
                 or d.get("receiving_warehouse_name")
             )
@@ -145,7 +151,7 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
             wh_code = _s(
                 d.get("default_receiving_warehouse_code")
                 or d.get("receiving_warehouse_code")
-                or d.get("warehouse_code")  # <-- YOUR EXCEL (maps to Warehouse.code)
+                or d.get("warehouse_code")
             )
 
             wh_name, wh_code_final = _resolve_warehouse(wh_link=wh_link, wh_code=wh_code)
@@ -163,13 +169,14 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
             # -----------------------------
             # ITEMS
             # -----------------------------
-            item_list = items_by_parent.get(asn_name, [])
+            item_list = items_by_parent.get(excel_name, [])
             if not item_list:
-                errors.append({"name": asn_name, "error": "No items found in 'WMS ASN Item' for this parent"})
+                errors.append({
+                    "name": excel_name,
+                    "error": "No items found in 'WMS ASN Item' for this parent"
+                })
                 continue
 
-            # ✅ IMPORTANT FIX:
-            # Find the correct child table fieldname on WMS ASN which points to "WMS ASN Item"
             item_table_field = _get_child_table_fieldname(asn, ASN_ITEM_DT)
             if not item_table_field:
                 raise Exception(
@@ -194,18 +201,32 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
                 _set_any(child, ["po_item_reference", "po_detail", "purchase_order_item"], it.get("po_item_reference"))
 
             # Insert + optional submit
+            # IMPORTANT:
+            # We do NOT set asn.name = excel_name
+            # So ERPNext keeps its own naming series
             asn.insert(ignore_permissions=True)
 
             if cint(submit):
                 asn.submit()
 
-            created.append(asn.name)
+            created.append({
+                "docname": asn.name,
+                "title": asn.get("title") or asn.get("asn_title") or ""
+            })
 
         except Exception as e:
-            errors.append({"name": asn_name, "error": str(e)})
+            errors.append({
+                "name": excel_name,
+                "error": str(e)
+            })
 
     frappe.db.commit()
-    return {"status": "ok", "count": len(created), "created": created, "errors": errors}
+    return {
+        "status": "ok",
+        "count": len(created),
+        "created": created,
+        "errors": errors
+    }
 
 
 # -----------------------------
@@ -234,7 +255,7 @@ def _s(v):
 
 
 def _set_any(doc, candidates, value):
-    """Set first existing field from candidate list"""
+    """Set first existing field from candidate list."""
     if value in (None, ""):
         return
     for f in candidates:
@@ -274,7 +295,7 @@ def _resolve_warehouse(wh_link: str = "", wh_code: str = ""):
     """
     Returns (warehouse_name, warehouse_code)
     - wh_link: Warehouse docname (Link)
-    - wh_code: Warehouse.code (your custom field 'code')
+    - wh_code: Warehouse.code (custom field 'code')
     """
     wh_name = ""
     wh_code_final = ""
