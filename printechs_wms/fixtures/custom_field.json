@@ -635,7 +635,7 @@
   "columns": 0,
   "default": "0",
   "depends_on": null,
-  "description": "Include this user in WMS user sync when Warehouse User role is assigned.",
+  "description": "Include this user in WMS user sync when Warehouse User role is assigned",
   "docstatus": 0,
   "doctype": "Custom Field",
   "dt": "User",
