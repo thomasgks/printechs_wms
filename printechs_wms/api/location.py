@@ -8,7 +8,7 @@ DEFAULT_FIELDS = [
     "name", "location_id", "location_name", "status", "company",
     "zone", "aisle", "rack", "level", "bin",
     "erp_warehouse", "location_type", "priority",
-    "is_locked", "allow_mixed_items", "allow_mixed_cartons",
+    "custom_is_locked", "allow_mixed_items", "allow_mixed_cartons",
     "modified", "creation"
 ]
 

@@ -112,7 +112,7 @@
    "fieldname": "location_type",
    "fieldtype": "Select",
    "label": "Location Type",
-   "options": "Storage\nReceiving\nStaging\nPacking\nDamage\nReturns"
+   "options": "Storage\nReceiving\nStaging\nPacking\nDamage\nReturns\nDISPATCHED AREA"
   },
   {
    "default": "0",
