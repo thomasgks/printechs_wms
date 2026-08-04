@@ -83,6 +83,7 @@ app_license = "mit"
 # ------------
 
 # before_install = "printechs_wms.install.before_install"
+after_install = "printechs_wms.setup_warehouse_user.setup_warehouse_user_master"
 # after_install = "printechs_wms.install.after_install"
 
 # Uninstallation
@@ -149,7 +150,14 @@ app_license = "mit"
 doc_events = {
     "Item": {
         "before_save": "printechs_wms.api.item.update_custom_wms_modified"
-    }
+    },
+    "User": {
+        "before_save": "printechs_wms.api.user.update_custom_wms_modified"
+    },
+    "Has Role": {
+        "after_insert": "printechs_wms.api.user.touch_user_wms_modified_from_has_role",
+        "on_trash": "printechs_wms.api.user.touch_user_wms_modified_from_has_role",
+    },
 }
 
 doctype_js = {
