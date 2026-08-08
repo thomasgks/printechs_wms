@@ -38,7 +38,7 @@ BATCH_DT = "WMS Cycle Count Batch"
 SUMMARY_CHILD_DT = "WMS Cycle Count Batch Summary"
 STOCK_BAL_DT = "WMS Stock Balance"
 
-API_VERSION = "cycle_count_batch_v7_company_stock_adj"
+API_VERSION = "cycle_count_batch_v8_type_safe_compare"
 
 VERIFICATION_SHEET = "Cycle Count Verification"
 LEGACY_SHEET = "Opening Valuation Upload"
@@ -591,9 +591,9 @@ def _build_wms_count_map(res_rows, has_carton_id: bool) -> dict[tuple, float]:
             continue
         carton = ((r.get("carton_id") if has_carton_id else None) or "").strip()
         key = (item_code, location, carton)
-        rname = r.get("name") or ""
+        rname = cstr(r.get("name") or "")
         qty = float(r.get("counted_qty") or 0)
-        if key not in grouped or rname > grouped[key]["name"]:
+        if key not in grouped or rname > cstr(grouped[key].get("name") or ""):
             grouped[key] = {"qty": qty, "name": rname}
     return {k: v["qty"] for k, v in grouped.items()}
 
@@ -1064,8 +1064,8 @@ def load_actual_stock_preview(batch_name: str):
     for r in res_rows:
         key = _k(r)
         q = _safe_float(r.get("counted_qty"))
-        rname = r.get("name") or ""
-        if key not in grouped or (rname > (grouped[key].get("name") or "")):
+        rname = cstr(r.get("name") or "")
+        if key not in grouped or (rname > cstr(grouped[key].get("name") or "")):
             grouped[key] = {"counted": q, "name": rname}
 
     b.set("summary", [])
@@ -1237,7 +1237,7 @@ def export_opening_valuation_template(batch_name=None):
         wms_delta_qty = flt(totals.get("delta_qty"))
         erp_current_qty = _get_erp_bin_qty(item_code, warehouse)
         erp_delta_qty = counted_qty - erp_current_qty
-        default_rate = _default_valuation_rate(item_code, warehouse, wms_previous_qty)
+        default_rate = flt(_default_valuation_rate(item_code, warehouse, wms_previous_qty))
         erp_value_impact = erp_delta_qty * default_rate if default_rate else 0.0
         inf = item_info.get(item_code, {})
 
