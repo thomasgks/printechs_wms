@@ -38,17 +38,17 @@ BATCH_DT = "WMS Cycle Count Batch"
 SUMMARY_CHILD_DT = "WMS Cycle Count Batch Summary"
 STOCK_BAL_DT = "WMS Stock Balance"
 
-API_VERSION = "cycle_count_batch_v6_recon_wh_zero"
+API_VERSION = "cycle_count_batch_v7_company_stock_adj"
 
 VERIFICATION_SHEET = "Cycle Count Verification"
 LEGACY_SHEET = "Opening Valuation Upload"
 
 
 # ---------------------------------------------------------------------
-# CONFIG: Difference Accounts (Update these to your chart of accounts)
+# CONFIG: Difference Accounts (fallback when Company fields are empty)
 # ---------------------------------------------------------------------
 OPENING_DIFFERENCE_ACCOUNT = "1.04.01.01 - Temporary Opening - MAATC"     # MUST be Asset/Liability
-ADJUSTMENT_DIFFERENCE_ACCOUNT = "5.01.01.01 - Stock Adjustment - MAATC"   # Usually Expense
+ADJUSTMENT_DIFFERENCE_ACCOUNT = "5.01.01.01 - Stock Adjustment - MAATC"   # legacy fallback only
 
 
 # ---------------------------------------------------------------------
@@ -169,11 +169,12 @@ def get_batch_linked_tasks(batch_name: str):
         "name",
         "posting_date",
         "status",
-        "count_mode",
         "external_ref",
         "modified",
         "creation",
     ]
+    if _meta_has(TASK_DT, "count_mode"):
+        fields.append("count_mode")
     if _meta_has(TASK_DT, "include_in_post"):
         fields.append("include_in_post")
     if _meta_has(TASK_DT, "sync_stage"):
@@ -280,12 +281,44 @@ def link_task_to_batch(task_doc):
     return bname
 
 
-def _pick_difference_account(opening_entry: int) -> str:
+def _get_company_stock_adjustment_account(company: str | None) -> str | None:
+    company = (company or "").strip()
+    if not company or not _meta_has("Company", "stock_adjustment_account"):
+        return None
+    acc = (frappe.db.get_value("Company", company, "stock_adjustment_account") or "").strip()
+    return acc or None
+
+
+def _get_company_opening_difference_account(company: str | None) -> str | None:
+    company = (company or "").strip()
+    if not company:
+        return None
+    if _meta_has("Company", "round_off_for_opening"):
+        acc = (frappe.db.get_value("Company", company, "round_off_for_opening") or "").strip()
+        if acc:
+            return acc
+    return None
+
+
+def _pick_difference_account(opening_entry: int, company: str | None = None) -> str:
     """
     Opening entry requires Asset/Liability account in ERPNext.
-    Normal adjustment should go to Expense/Stock Adjustment.
+    Normal adjustment uses Company.stock_adjustment_account (Stock Settings tab).
     """
-    return OPENING_DIFFERENCE_ACCOUNT if cint(opening_entry) else ADJUSTMENT_DIFFERENCE_ACCOUNT
+    if cint(opening_entry):
+        return _get_company_opening_difference_account(company) or OPENING_DIFFERENCE_ACCOUNT
+
+    acc = _get_company_stock_adjustment_account(company)
+    if acc:
+        return acc
+    if ADJUSTMENT_DIFFERENCE_ACCOUNT:
+        return ADJUSTMENT_DIFFERENCE_ACCOUNT
+    frappe.throw(
+        _(
+            "Stock Adjustment Account is not set on Company {0}. "
+            "Open Company → Stock and Manufacturing → Stock Settings and set it."
+        ).format(company or "")
+    )
 
 
 def _ensure_account_exists(account_name: str):
@@ -1274,7 +1307,7 @@ def export_opening_valuation_template(batch_name=None):
         "- Yellow: valuation_rate missing — finance must fill before upload.",
         "- Orange: WMS delta differs from ERP delta — review before posting.",
         "",
-        f"Difference account (adjustment): {ADJUSTMENT_DIFFERENCE_ACCOUNT}",
+        f"Difference account (adjustment): {_pick_difference_account(opening_entry=0, company=company)}",
     ]
     for i, line in enumerate(readme, start=1):
         ws2.cell(row=i, column=1, value=line).alignment = Alignment(wrap_text=True)
@@ -1336,10 +1369,6 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
 
     batch_defaults = {}
     b = None
-    user_diff_account = (
-        frappe.local.form_dict.get("difference_account")
-        or frappe.local.form_dict.get("adjustment_difference_account")
-    )
 
     if batch_name:
         b = frappe.get_doc(BATCH_DT, batch_name)
@@ -1358,9 +1387,6 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
                         "Cancel that SR first if you need to create a new one."
                     ).format(existing_sr)
                 )
-
-        if not user_diff_account and _meta_has(BATCH_DT, "difference_account"):
-            user_diff_account = (b.get("difference_account") or "").strip() or None
 
     fdoc = None
     if file_id:
@@ -1482,7 +1508,7 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
         rate = (float(a["total_val"]) / qty) if qty else 0.0
         rows.append({"item_code": item, "qty": qty, "valuation_rate": rate})
 
-    diff_acc = (cstr(user_diff_account).strip() or "") or _pick_difference_account(opening_entry=0)
+    diff_acc = _pick_difference_account(opening_entry=0, company=first_company)
     _ensure_account_exists(diff_acc)
 
     SR_DT = "Stock Reconciliation"
@@ -1824,7 +1850,7 @@ def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=0, is_op
 
                 val_field = "valuation_rate" if sri_meta.has_field("valuation_rate") else ("rate" if sri_meta.has_field("rate") else None)
 
-                diff_acc = _pick_difference_account(opening_entry=0)
+                diff_acc = _pick_difference_account(opening_entry=0, company=company)
                 _ensure_account_exists(diff_acc)
 
                 sr = frappe.get_doc({"doctype": SR_DT})
@@ -1922,8 +1948,8 @@ def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=0, is_op
         "cleared_cartons": cleared_cartons,
         "sr": sr_name,
         "sr_note": sr_note,
-        "difference_account_opening": OPENING_DIFFERENCE_ACCOUNT,
-        "difference_account_adjustment": ADJUSTMENT_DIFFERENCE_ACCOUNT,
+        "difference_account_opening": _pick_difference_account(opening_entry=1, company=company),
+        "difference_account_adjustment": _pick_difference_account(opening_entry=0, company=company),
     }
 
 

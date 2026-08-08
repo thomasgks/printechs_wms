@@ -241,7 +241,6 @@ frappe.ui.form.on("WMS Cycle Count Batch", {
 			}).addClass("btn-primary");
 
 			frm.add_custom_button(__("Upload Verified Excel (Create Reconciliation SR)"), () => {
-				const company = frm.doc.company || "";
 				frappe.prompt(
 					[
 						{
@@ -250,22 +249,8 @@ frappe.ui.form.on("WMS Cycle Count Batch", {
 							label: __("Verification Excel"),
 							reqd: 1,
 							description: __(
-								"Upload finance-verified Excel. counted_qty must not be changed — valuation_rate only."
+								"Upload finance-verified Excel. counted_qty must not be changed — valuation_rate only. Difference account is taken from Company settings."
 							),
-						},
-						{
-							fieldname: "difference_account",
-							fieldtype: "Link",
-							options: "Account",
-							label: __("Difference Account"),
-							reqd: 0,
-							get_query: () => ({
-								filters: [
-									["Account", "root_type", "=", "Expense"],
-									["Account", "is_group", "=", 0],
-									["Account", "company", "=", company],
-								],
-							}),
 						},
 					],
 					(values) => {
@@ -275,7 +260,6 @@ frappe.ui.form.on("WMS Cycle Count Batch", {
 							args: {
 								file_url: values.valuation_file,
 								batch_name: frm.doc.name,
-								difference_account: values.difference_account,
 							},
 							freeze: true,
 							freeze_message: __("Creating Stock Reconciliation..."),
