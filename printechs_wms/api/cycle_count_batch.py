@@ -38,7 +38,7 @@ BATCH_DT = "WMS Cycle Count Batch"
 SUMMARY_CHILD_DT = "WMS Cycle Count Batch Summary"
 STOCK_BAL_DT = "WMS Stock Balance"
 
-API_VERSION = "cycle_count_batch_v8_type_safe_compare"
+API_VERSION = "cycle_count_batch_v9_type_safe_all"
 
 VERIFICATION_SHEET = "Cycle Count Verification"
 LEGACY_SHEET = "Opening Valuation Upload"
@@ -70,6 +70,15 @@ def _safe_float(v) -> float:
         return float(v or 0)
     except Exception:
         return 0.0
+
+
+def _row_name(value) -> str:
+    """Normalize child-row names for safe string comparison (PyMySQL may return int)."""
+    return cstr(value or "")
+
+
+def _is_later_row_name(current, existing) -> bool:
+    return _row_name(current) > _row_name(existing)
 
 
 def _normalize_task_status(in_status: str | None) -> str:
@@ -396,8 +405,8 @@ def _get_erp_bin_qty(item_code: str, warehouse: str) -> float:
 def _default_valuation_rate(item_code: str, warehouse: str, previous_qty: float) -> float:
     """Bin rate when stock exists; otherwise Item master valuation/standard rate."""
     erp_qty = _get_erp_bin_qty(item_code, warehouse)
-    ref_qty = flt(previous_qty) if flt(previous_qty) > 0 else erp_qty
-    if ref_qty > 0:
+    ref_qty = flt(previous_qty) if flt(previous_qty) > 0 else flt(erp_qty)
+    if flt(ref_qty) > 0:
         bin_rate = frappe.db.get_value(
             "Bin",
             {"item_code": item_code, "warehouse": warehouse},
@@ -591,9 +600,9 @@ def _build_wms_count_map(res_rows, has_carton_id: bool) -> dict[tuple, float]:
             continue
         carton = ((r.get("carton_id") if has_carton_id else None) or "").strip()
         key = (item_code, location, carton)
-        rname = cstr(r.get("name") or "")
-        qty = float(r.get("counted_qty") or 0)
-        if key not in grouped or rname > cstr(grouped[key].get("name") or ""):
+        rname = _row_name(r.get("name"))
+        qty = _safe_float(r.get("counted_qty"))
+        if key not in grouped or _is_later_row_name(rname, grouped[key].get("name")):
             grouped[key] = {"qty": qty, "name": rname}
     return {k: v["qty"] for k, v in grouped.items()}
 
@@ -1064,8 +1073,8 @@ def load_actual_stock_preview(batch_name: str):
     for r in res_rows:
         key = _k(r)
         q = _safe_float(r.get("counted_qty"))
-        rname = cstr(r.get("name") or "")
-        if key not in grouped or (rname > cstr(grouped[key].get("name") or "")):
+        rname = _row_name(r.get("name"))
+        if key not in grouped or _is_later_row_name(rname, grouped[key].get("name")):
             grouped[key] = {"counted": q, "name": rname}
 
     b.set("summary", [])
@@ -1260,8 +1269,8 @@ def export_opening_valuation_template(batch_name=None):
                 wms_delta_qty,
                 erp_current_qty,
                 erp_delta_qty,
-                default_rate if default_rate > 0 else "",
-                erp_value_impact if default_rate > 0 else "",
+                default_rate if flt(default_rate) > 0 else "",
+                erp_value_impact if flt(default_rate) > 0 else "",
                 currency,
                 "",
                 f"Batch {batch_name}: do NOT change counted_qty; edit valuation_rate only",
@@ -1882,9 +1891,9 @@ def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=0, is_op
 
                 for item_code, counted_qty in erp_group.items():
                     previous_qty = flt((item_totals.get(item_code) or {}).get("previous_qty"))
-                    vr = _default_valuation_rate(item_code, warehouse, previous_qty)
+                    vr = flt(_default_valuation_rate(item_code, warehouse, previous_qty))
 
-                    if vr <= 0:
+                    if flt(vr) <= 0:
                         frappe.throw(
                             _(
                                 "Valuation missing for Item {0} in Warehouse {1}. "
@@ -2013,7 +2022,7 @@ def get_stock_balance_compact(
         limit_page_length=limit + 1,
     )
 
-    has_more = len(rows) > limit
+    has_more = len(rows) > cint(limit)
     if has_more:
         rows = rows[:limit]
 
