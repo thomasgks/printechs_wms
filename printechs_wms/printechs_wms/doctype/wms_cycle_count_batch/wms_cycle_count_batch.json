@@ -14,6 +14,7 @@
   "status",
   "posted_on",
   "posted_by",
+  "stock_reconciliation",
   "column_break_iqdx",
   "posting_date",
   "warehouse",
@@ -57,6 +58,13 @@
    "fieldtype": "Link",
    "label": "Posted By",
    "options": "User"
+  },
+  {
+   "fieldname": "stock_reconciliation",
+   "fieldtype": "Link",
+   "label": "Stock Reconciliation",
+   "options": "Stock Reconciliation",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_iqdx",

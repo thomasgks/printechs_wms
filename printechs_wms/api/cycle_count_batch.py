@@ -5,9 +5,9 @@ cycle_count_batch.py
 APIs included:
 1) sync_task_capture_only(payload)              -> capture task + replace results safely (no duplicates)
 2) load_actual_stock_preview(batch_name)        -> compute system_qty/delta + fill Batch Summary
-3) export_opening_valuation_template(batch_name)-> export grouped excel for finance to fill valuation_rate
-4) upload_opening_valuation_file(...)           -> read excel + create Opening Stock Reconciliation (SR)
-5) confirm_and_post_batch(...)                  -> update WMS Stock Balance + link SR (opening) or create SR (adjustment)
+3) export_opening_valuation_template(batch_name)-> export item-level verification Excel for finance
+4) upload_opening_valuation_file(...)           -> read excel + create Stock Reconciliation (adjustment)
+5) confirm_and_post_batch(...)                  -> update WMS Stock Balance + link uploaded SR
 
 Notes:
 - FIXED: API4 file path indentation bug (file always resolves)
@@ -38,7 +38,10 @@ BATCH_DT = "WMS Cycle Count Batch"
 SUMMARY_CHILD_DT = "WMS Cycle Count Batch Summary"
 STOCK_BAL_DT = "WMS Stock Balance"
 
-API_VERSION = "cycle_count_batch_v2_complete"
+API_VERSION = "cycle_count_batch_v6_recon_wh_zero"
+
+VERIFICATION_SHEET = "Cycle Count Verification"
+LEGACY_SHEET = "Opening Valuation Upload"
 
 
 # ---------------------------------------------------------------------
@@ -101,17 +104,19 @@ def _extract_carton_id(row: dict) -> str | None:
 
 
 def get_or_create_batch(company: str, warehouse: str, warehouse_code: str, posting_date: str | None):
-    posting_date = posting_date or today()
+    """
+    One open Draft batch per warehouse cycle (posting_date on tasks may differ by day).
+    """
     bname = frappe.db.get_value(
         BATCH_DT,
         {
             "company": company,
             "warehouse": warehouse,
             "warehouse_code": warehouse_code,
-            "posting_date": posting_date,
-            "status": "Draft",
+            "status": ["in", ["Draft", "Previewed"]],
         },
         "name",
+        order_by="modified desc",
     )
     if bname:
         return bname
@@ -122,12 +127,133 @@ def get_or_create_batch(company: str, warehouse: str, warehouse_code: str, posti
             "company": company,
             "warehouse": warehouse,
             "warehouse_code": warehouse_code,
-            "posting_date": posting_date,
+            "posting_date": posting_date or today(),
             "status": "Draft",
         }
     )
     b.insert(ignore_permissions=True)
     return b.name
+
+
+def _tasks_for_batch_processing(batch_name: str) -> list[str]:
+    """
+    Tasks included in Preview/Post: linked to batch, include_in_post=1, not already Posted.
+    """
+    rows = frappe.get_all(
+        TASK_DT,
+        filters={"batch": batch_name},
+        fields=["name", "status"],
+        limit_page_length=200000,
+    )
+    names = []
+    for row in rows:
+        if (row.get("status") or "").strip() == "Posted":
+            continue
+        if _meta_has(TASK_DT, "include_in_post"):
+            if not cint(frappe.db.get_value(TASK_DT, row.name, "include_in_post")):
+                continue
+        names.append(row.name)
+    return names
+
+
+@frappe.whitelist()
+def get_batch_linked_tasks(batch_name: str):
+    """List tasks linked to a batch for the batch form task-selection panel."""
+    if not batch_name:
+        frappe.throw(_("batch_name is required"))
+
+    if not frappe.db.exists(BATCH_DT, batch_name):
+        frappe.throw(_("Batch {0} not found.").format(batch_name))
+
+    fields = [
+        "name",
+        "posting_date",
+        "status",
+        "count_mode",
+        "external_ref",
+        "modified",
+        "creation",
+    ]
+    if _meta_has(TASK_DT, "include_in_post"):
+        fields.append("include_in_post")
+    if _meta_has(TASK_DT, "sync_stage"):
+        fields.append("sync_stage")
+
+    tasks = frappe.get_all(
+        TASK_DT,
+        filters={"batch": batch_name},
+        fields=fields,
+        order_by="posting_date asc, creation asc",
+        limit_page_length=200000,
+    )
+
+    included_count = 0
+    pending_count = 0
+    for row in tasks:
+        row["line_count"] = frappe.db.count(RESULT_DT, {"parent": row.name})
+        row["include_in_post"] = cint(row.get("include_in_post", 1))
+        is_posted = (row.get("status") or "").strip() == "Posted"
+        if not is_posted:
+            pending_count += 1
+            if row["include_in_post"]:
+                included_count += 1
+
+    batch_status = frappe.db.get_value(BATCH_DT, batch_name, "status")
+
+    return {
+        "ok": True,
+        "batch": batch_name,
+        "batch_status": batch_status,
+        "tasks": tasks,
+        "total": len(tasks),
+        "included_count": included_count,
+        "pending_count": pending_count,
+    }
+
+
+@frappe.whitelist()
+def set_batch_task_inclusion(batch_name: str, selections=None):
+    """Update include_in_post for one or more tasks on a batch."""
+    if not batch_name:
+        frappe.throw(_("batch_name is required"))
+
+    selections = frappe.parse_json(selections) if isinstance(selections, str) else (selections or [])
+    if not isinstance(selections, list):
+        frappe.throw(_("selections must be a list"))
+
+    batch_status = frappe.db.get_value(BATCH_DT, batch_name, "status")
+    if batch_status == "Posted":
+        frappe.throw(_("Cannot change task selection on a Posted batch."))
+
+    if not _meta_has(TASK_DT, "include_in_post"):
+        frappe.throw(_("Include in Post field is not available on WMS Cycle Count Task."))
+
+    updated = 0
+    for row in selections:
+        if not isinstance(row, dict):
+            continue
+        task_name = (row.get("name") or row.get("task") or "").strip()
+        if not task_name:
+            continue
+        if frappe.db.get_value(TASK_DT, task_name, "batch") != batch_name:
+            continue
+        if (frappe.db.get_value(TASK_DT, task_name, "status") or "").strip() == "Posted":
+            continue
+        include = cint(row.get("include_in_post", 1))
+        frappe.db.set_value(TASK_DT, task_name, "include_in_post", include, update_modified=True)
+        updated += 1
+
+    batch_reset = False
+    if updated and batch_status == "Previewed":
+        frappe.db.set_value(BATCH_DT, batch_name, "status", "Draft", update_modified=True)
+        if _meta_has(BATCH_DT, "preview_loaded_on"):
+            frappe.db.set_value(BATCH_DT, batch_name, "preview_loaded_on", None, update_modified=False)
+        batch_reset = True
+
+    summary = get_batch_linked_tasks(batch_name)
+    summary["updated"] = updated
+    summary["batch_reset"] = batch_reset
+    return summary
 
 
 def link_task_to_batch(task_doc):
@@ -141,6 +267,12 @@ def link_task_to_batch(task_doc):
         getattr(task_doc, "posting_date", None),
     )
     task_doc.db_set("batch", bname, update_modified=True)
+
+    batch_status = frappe.db.get_value(BATCH_DT, bname, "status")
+    if batch_status == "Previewed":
+        frappe.db.set_value(BATCH_DT, bname, "status", "Draft", update_modified=True)
+        if _meta_has(BATCH_DT, "preview_loaded_on"):
+            frappe.db.set_value(BATCH_DT, bname, "preview_loaded_on", None, update_modified=False)
 
     if _meta_has(TASK_DT, "sync_stage"):
         task_doc.db_set("sync_stage", "In Batch", update_modified=True)
@@ -217,6 +349,421 @@ def _get_stock_snapshot(item_code: str, warehouse: str, posting_date: str, posti
     return flt(b.get("actual_qty") or 0), flt(b.get("valuation_rate") or 0)
 
 
+def _get_erp_bin_qty(item_code: str, warehouse: str) -> float:
+    return flt(
+        frappe.db.get_value(
+            "Bin",
+            {"item_code": item_code, "warehouse": warehouse},
+            "actual_qty",
+        )
+        or 0
+    )
+
+
+def _default_valuation_rate(item_code: str, warehouse: str, previous_qty: float) -> float:
+    """Bin rate when stock exists; otherwise Item master valuation/standard rate."""
+    erp_qty = _get_erp_bin_qty(item_code, warehouse)
+    ref_qty = flt(previous_qty) if flt(previous_qty) > 0 else erp_qty
+    if ref_qty > 0:
+        bin_rate = frappe.db.get_value(
+            "Bin",
+            {"item_code": item_code, "warehouse": warehouse},
+            "valuation_rate",
+        )
+        if flt(bin_rate) > 0:
+            return flt(bin_rate)
+
+    for field in ("valuation_rate", "standard_rate"):
+        item_rate = frappe.db.get_value("Item", item_code, field)
+        if flt(item_rate) > 0:
+            return flt(item_rate)
+    return 0.0
+
+
+def _normalize_count_mode(mode: str | None) -> str:
+    """Reconciliation = replace location truth. Adhoc Add = discover extra stock in new carton."""
+    m = cstr(mode).strip().lower().replace(" ", "_").replace("-", "_")
+    if m in ("adhoc", "adhoc_add", "add", "additional", "add_stock", "adhocadd"):
+        return "adhoc_add"
+    return "reconciliation"
+
+
+def _aggregate_item_totals_from_batch(batch_name: str) -> dict[str, dict]:
+    """
+    Sum preview quantities at item level (warehouse-wide, no bin in Excel).
+    Returns {item_code: {previous_qty, counted_qty, delta_qty}}.
+
+    Adhoc Add tasks add to ERP current qty; Reconciliation tasks set counted truth.
+    """
+    b = frappe.get_doc(BATCH_DT, batch_name)
+    warehouse = b.get("warehouse")
+    grouped: dict[str, dict] = {}
+
+    if b.get("summary"):
+        task_names = frappe.get_all(TASK_DT, filters={"batch": batch_name}, pluck="name")
+        task_modes = {}
+        if task_names and _meta_has(TASK_DT, "count_mode"):
+            for t in frappe.get_all(
+                TASK_DT, filters={"name": ["in", task_names]}, fields=["name", "count_mode"]
+            ):
+                task_modes[t.name] = _normalize_count_mode(t.get("count_mode"))
+
+        # Map summary rows — batch summary has no task ref; treat as reconciliation
+        for row in b.summary:
+            item_code = cstr(row.get("item_code")).strip()
+            if not item_code:
+                continue
+            bucket = grouped.setdefault(
+                item_code,
+                {
+                    "previous_qty": 0.0,
+                    "counted_qty": 0.0,
+                    "reconciliation_counted": 0.0,
+                    "adhoc_counted": 0.0,
+                    "wms_previous": 0.0,
+                },
+            )
+            bucket["wms_previous"] += flt(row.get("total_system_qty"))
+            bucket["reconciliation_counted"] += flt(row.get("total_counted_qty"))
+    else:
+        task_names = _tasks_for_batch_processing(batch_name)
+        if not task_names:
+            return grouped
+
+        task_modes = {}
+        if _meta_has(TASK_DT, "count_mode"):
+            for t in frappe.get_all(
+                TASK_DT, filters={"name": ["in", task_names]}, fields=["name", "count_mode"]
+            ):
+                task_modes[t.name] = _normalize_count_mode(t.get("count_mode"))
+
+        res_fields = ["parent", "item_code", "counted_qty", "system_qty"]
+        res_rows = frappe.get_all(
+            RESULT_DT,
+            filters={"parent": ["in", task_names]},
+            fields=res_fields,
+            limit_page_length=200000,
+        )
+        for row in res_rows:
+            item_code = cstr(row.get("item_code")).strip()
+            if not item_code:
+                continue
+            mode = task_modes.get(row.get("parent"), "reconciliation")
+            bucket = grouped.setdefault(
+                item_code,
+                {
+                    "previous_qty": 0.0,
+                    "counted_qty": 0.0,
+                    "reconciliation_counted": 0.0,
+                    "adhoc_counted": 0.0,
+                    "wms_previous": 0.0,
+                },
+            )
+            counted = flt(row.get("counted_qty"))
+            bucket["wms_previous"] += flt(row.get("system_qty"))
+            if mode == "adhoc_add":
+                bucket["adhoc_counted"] += counted
+            else:
+                bucket["reconciliation_counted"] += counted
+
+    for item_code, data in grouped.items():
+        erp_current = _get_erp_bin_qty(item_code, warehouse) if warehouse else 0.0
+        if data["adhoc_counted"] and not data["reconciliation_counted"]:
+            # Pure adhoc: additional stock discovered
+            data["counted_qty"] = erp_current + data["adhoc_counted"]
+            data["previous_qty"] = erp_current
+        elif data["reconciliation_counted"]:
+            data["counted_qty"] = data["reconciliation_counted"] + data["adhoc_counted"]
+            data["previous_qty"] = data["wms_previous"] or erp_current
+        else:
+            data["counted_qty"] = flt(data.get("counted_qty"))
+            data["previous_qty"] = data["wms_previous"] or erp_current
+        data["delta_qty"] = flt(data["counted_qty"]) - flt(data["previous_qty"])
+
+    return grouped
+
+
+def _validate_upload_counts_match_batch(batch_name: str, uploaded_by_item: dict[str, float]) -> None:
+    """
+    Block finance Excel upload when counted qty was changed vs device/batch totals.
+    Location-level WMS post uses task lines; SR uses item totals — they must match.
+    valuation_rate may still be overridden in Excel.
+    """
+    if not batch_name:
+        return
+
+    if not _batch_preview_loaded(batch_name):
+        frappe.throw(
+            _("Run 'Load Actual Stock Preview' on the batch before uploading verification Excel.")
+        )
+
+    expected = _aggregate_item_totals_from_batch(batch_name)
+    if not expected:
+        frappe.throw(_("No expected item totals found on batch {0}.").format(batch_name))
+
+    mismatches = []
+    missing = []
+    extras = []
+
+    for item_code, data in expected.items():
+        exp_qty = flt(data.get("counted_qty"))
+        if item_code not in uploaded_by_item:
+            missing.append((item_code, exp_qty))
+            continue
+        up_qty = flt(uploaded_by_item[item_code])
+        if abs(up_qty - exp_qty) > 1e-6:
+            mismatches.append((item_code, exp_qty, up_qty))
+
+    for item_code in uploaded_by_item:
+        if item_code not in expected:
+            extras.append(item_code)
+
+    if not (mismatches or missing or extras):
+        return
+
+    lines = [
+        _(
+            "Uploaded counted qty must match batch device totals (do not edit counted_qty in Excel). "
+            "Change counts on mobile and re-run Preview, or finance may edit valuation_rate only."
+        )
+    ]
+    for item_code, exp_qty, up_qty in mismatches:
+        lines.append(
+            _("• Item {0}: uploaded {1}, batch total {2}").format(item_code, up_qty, exp_qty)
+        )
+    for item_code, exp_qty in missing:
+        lines.append(_("• Item {0}: missing in Excel (batch total {1})").format(item_code, exp_qty))
+    for item_code in extras:
+        lines.append(_("• Item {0}: not in this batch").format(item_code))
+
+    frappe.throw("<br>".join(lines), title=_("Count qty mismatch"))
+
+
+def _batch_preview_loaded(batch_name: str) -> bool:
+    status = cstr(frappe.db.get_value(BATCH_DT, batch_name, "status")).strip()
+    if status == "Previewed":
+        return True
+    if _meta_has(BATCH_DT, "preview_loaded_on"):
+        return bool(frappe.db.get_value(BATCH_DT, batch_name, "preview_loaded_on"))
+    return False
+
+
+def _build_wms_count_map(res_rows, has_carton_id: bool) -> dict[tuple, float]:
+    """One counted qty per (item, location, carton); latest result row wins."""
+    grouped: dict[tuple, dict] = {}
+    for r in res_rows:
+        item_code = (r.get("item_code") or "").strip()
+        location = (r.get("bin_location") or "").strip()
+        if not item_code or not location:
+            continue
+        carton = ((r.get("carton_id") if has_carton_id else None) or "").strip()
+        key = (item_code, location, carton)
+        rname = r.get("name") or ""
+        qty = float(r.get("counted_qty") or 0)
+        if key not in grouped or rname > grouped[key]["name"]:
+            grouped[key] = {"qty": qty, "name": rname}
+    return {k: v["qty"] for k, v in grouped.items()}
+
+
+def _zero_stale_wms_cartons(
+    company: str,
+    warehouse: str,
+    wms_group: dict,
+    nowdt,
+    batch_name: str | None = None,
+    reconciliation_items: set | None = None,
+    adhoc_location_items: set | None = None,
+) -> tuple[int, list[dict]]:
+    """
+    Clear WMS balances not in the cycle count.
+
+    Reconciliation items: warehouse-wide — any carton/location not in wms_group is zeroed
+    (matches ERP item-level SR total with WMS sum).
+
+    Adhoc-only items: only at counted locations — other cartons at that location are zeroed;
+    other locations are left unchanged.
+    """
+    if not wms_group:
+        return 0, []
+
+    counted_keys = set(wms_group.keys())
+    reconciliation_items = reconciliation_items or set()
+    adhoc_location_items = adhoc_location_items or set()
+    cleared: list[dict] = []
+    seen_balance_names: set[str] = set()
+
+    def _clear_row(row, item_code: str, location: str, carton: str) -> None:
+        row_name = row.get("name")
+        if row_name in seen_balance_names:
+            return
+        prev_qty = flt(row.get("qty"))
+        if prev_qty == 0:
+            return
+        seen_balance_names.add(row_name)
+        frappe.db.set_value(STOCK_BAL_DT, row_name, "qty", 0, update_modified=False)
+        if _meta_has(STOCK_BAL_DT, "last_txn_datetime"):
+            frappe.db.set_value(
+                STOCK_BAL_DT, row_name, "last_txn_datetime", nowdt, update_modified=False
+            )
+        cleared.append(
+            {
+                "item_code": item_code,
+                "location": location,
+                "carton": carton,
+                "previous_qty": prev_qty,
+                "qty_after": 0,
+            }
+        )
+        _write_cycle_count_ledger_clear(
+            company=company,
+            warehouse=warehouse,
+            batch_name=batch_name,
+            item_code=item_code,
+            location=location,
+            carton=carton,
+            previous_qty=prev_qty,
+            nowdt=nowdt,
+        )
+
+    for item_code in reconciliation_items:
+        allowed_keys = {k for k in counted_keys if k[0] == item_code}
+        rows = frappe.get_all(
+            STOCK_BAL_DT,
+            filters={
+                "company": company,
+                "warehouse": warehouse,
+                "item_code": item_code,
+            },
+            fields=["name", "location", "carton", "qty"],
+        )
+        for row in rows:
+            location = (row.get("location") or "").strip()
+            carton = (row.get("carton") or "").strip()
+            if (item_code, location, carton) in allowed_keys:
+                continue
+            _clear_row(row, item_code, location, carton)
+
+    for item_code, location in adhoc_location_items:
+        if item_code in reconciliation_items:
+            continue
+        rows = frappe.get_all(
+            STOCK_BAL_DT,
+            filters={
+                "company": company,
+                "warehouse": warehouse,
+                "item_code": item_code,
+                "location": location,
+            },
+            fields=["name", "carton", "qty"],
+        )
+        for row in rows:
+            carton = (row.get("carton") or "").strip()
+            if (item_code, location, carton) in counted_keys:
+                continue
+            _clear_row(row, item_code, location, carton)
+
+    return len(cleared), cleared
+
+
+def _write_cycle_count_ledger_clear(
+    company: str,
+    warehouse: str,
+    batch_name: str | None,
+    item_code: str,
+    location: str,
+    carton: str,
+    previous_qty: float,
+    nowdt,
+) -> None:
+    """Ledger row so desktop pull/incremental sync sees stale carton cleared."""
+    LEDGER_DT = "WMS Stock Ledger Entry"
+    if not frappe.db.exists("DocType", LEDGER_DT):
+        return
+
+    batch_part = frappe.scrub(batch_name or "batch")
+    loc_part = frappe.scrub(location or "loc")
+    carton_part = frappe.scrub(carton or "none")
+    wms_txn_id = f"CCB-CLEAR-{batch_part}-{item_code}-{loc_part}-{carton_part}"
+
+    if frappe.db.exists(LEDGER_DT, {"wms_txn_id": wms_txn_id}):
+        return
+
+    doc = frappe.get_doc(
+        {
+            "doctype": LEDGER_DT,
+            "posting_datetime": nowdt,
+            "company": company,
+            "item_code": item_code,
+            "location": location,
+            "carton": carton or None,
+            "qty_change": -flt(previous_qty),
+            "qty_after": 0,
+            "event_type": "CycleCount",
+            "voucher_doctype": BATCH_DT,
+            "voucher_name": batch_name,
+            "wms_txn_id": wms_txn_id,
+            "remarks": _("Cycle count: cleared stale carton not in count"),
+        }
+    )
+    if _meta_has(LEDGER_DT, "warehouse"):
+        doc.warehouse = warehouse
+    doc.insert(ignore_permissions=True)
+
+
+def _write_cycle_count_ledger_set(
+    company: str,
+    warehouse: str,
+    batch_name: str | None,
+    item_code: str,
+    location: str,
+    carton: str,
+    previous_qty: float,
+    new_qty: float,
+    nowdt,
+) -> None:
+    """Ledger row when cycle count sets/adjusts a carton balance (desktop pull sync)."""
+    LEDGER_DT = "WMS Stock Ledger Entry"
+    if not frappe.db.exists("DocType", LEDGER_DT):
+        return
+
+    qty_change = flt(new_qty) - flt(previous_qty)
+    if abs(qty_change) < 1e-9:
+        return
+
+    batch_part = frappe.scrub(batch_name or "batch")
+    loc_part = frappe.scrub(location or "loc")
+    carton_part = frappe.scrub(carton or "none")
+    wms_txn_id = f"CCB-SET-{batch_part}-{item_code}-{loc_part}-{carton_part}"
+
+    if frappe.db.exists(LEDGER_DT, {"wms_txn_id": wms_txn_id}):
+        return
+
+    doc = frappe.get_doc(
+        {
+            "doctype": LEDGER_DT,
+            "posting_datetime": nowdt,
+            "company": company,
+            "item_code": item_code,
+            "location": location,
+            "carton": carton or None,
+            "qty_change": qty_change,
+            "qty_after": flt(new_qty),
+            "event_type": "CycleCount",
+            "voucher_doctype": BATCH_DT,
+            "voucher_name": batch_name,
+            "wms_txn_id": wms_txn_id,
+            "remarks": _("Cycle count: set counted balance"),
+        }
+    )
+    if _meta_has(LEDGER_DT, "warehouse"):
+        doc.warehouse = warehouse
+    doc.insert(ignore_permissions=True)
+
+
+def _company_currency(company: str) -> str:
+    return cstr(frappe.db.get_value("Company", company, "default_currency") or "SAR").strip() or "SAR"
+
+
 # ---------------------------------------------------------------------
 # API 1: Desktop -> Capture Task (REPLACE results, NO append)
 # ---------------------------------------------------------------------
@@ -254,6 +801,7 @@ def sync_task_capture_only(payload: dict | None = None):
 
     posting_date = task.get("posting_date") or today()
     status = _normalize_task_status(task.get("status") or "Completed")
+    count_mode = _normalize_count_mode(task.get("count_mode") or task.get("mode") or "Reconciliation")
 
     existing_name = _task_by_external_ref(external_ref)
 
@@ -320,6 +868,10 @@ def sync_task_capture_only(payload: dict | None = None):
             doc.sync_stage = "Captured"
         if _meta_has(TASK_DT, "sync_status"):
             doc.sync_status = "Synced"
+        if _meta_has(TASK_DT, "count_mode"):
+            doc.count_mode = "Adhoc Add" if count_mode == "adhoc_add" else "Reconciliation"
+        if _meta_has(TASK_DT, "include_in_post"):
+            doc.include_in_post = 1
 
         # delete all existing child rows to avoid append duplicates
         _delete_existing_child_rows(doc.name)
@@ -380,6 +932,10 @@ def sync_task_capture_only(payload: dict | None = None):
             doc.sync_stage = "Captured"
         if _meta_has(TASK_DT, "sync_status"):
             doc.sync_status = "Synced"
+        if _meta_has(TASK_DT, "count_mode"):
+            doc.count_mode = "Adhoc Add" if count_mode == "adhoc_add" else "Reconciliation"
+        if _meta_has(TASK_DT, "include_in_post"):
+            doc.include_in_post = 1
 
         if isinstance(lines, list):
             for i, row in enumerate(lines, start=1):
@@ -423,6 +979,7 @@ def sync_task_capture_only(payload: dict | None = None):
         "task": doc.name,
         "external_ref": external_ref,
         "batch": batch_name,
+        "count_mode": count_mode,
         "updated_lines": updated_lines,
     }
 
@@ -438,9 +995,9 @@ def load_actual_stock_preview(batch_name: str):
     if not warehouse_code:
         frappe.throw(_("Batch.warehouse_code is required."))
 
-    task_names = frappe.get_all(TASK_DT, filters={"batch": batch_name}, pluck="name")
+    task_names = _tasks_for_batch_processing(batch_name)
     if not task_names:
-        return {"ok": True, "updated_lines": 0, "summary_rows": 0, "note": "No tasks linked to this batch"}
+        return {"ok": True, "updated_lines": 0, "summary_rows": 0, "note": "No tasks selected for preview on this batch"}
 
     result_has_carton = _meta_has(RESULT_DT, "carton_id")
 
@@ -545,16 +1102,26 @@ def load_actual_stock_preview(batch_name: str):
     if _meta_has(BATCH_DT, "status"):
         b.status = "Previewed"
 
+    for tname in task_names:
+        if _meta_has(TASK_DT, "sync_stage"):
+            frappe.db.set_value(TASK_DT, tname, "sync_stage", "Previewed", update_modified=False)
+
     b.save(ignore_permissions=True)
 
     return {"ok": True, "batch": batch_name, "updated_lines": updated_lines, "summary_rows": len(b.summary)}
 
 
 # ---------------------------------------------------------------------
-# API 3: Export Opening Valuation Template (Excel)
+# API 3: Export Cycle Count Verification Excel (item-level)
 # ---------------------------------------------------------------------
 @frappe.whitelist()
 def export_opening_valuation_template(batch_name=None):
+    """
+    Export item-level verification Excel for finance.
+
+    Run load_actual_stock_preview first so previous_qty (system) is populated.
+    Finance may override valuation_rate; upload via upload_opening_valuation_file.
+    """
     import io
     import openpyxl
     from openpyxl.styles import Font, Alignment, PatternFill
@@ -566,6 +1133,14 @@ def export_opening_valuation_template(batch_name=None):
     if not batch_name:
         frappe.throw(_("batch_name is required"))
 
+    if not _batch_preview_loaded(batch_name):
+        frappe.throw(
+            _(
+                "Run 'Load Actual Stock Preview' before exporting. "
+                "Finance needs previous_qty (system) vs counted_qty."
+            )
+        )
+
     b = frappe.get_doc(BATCH_DT, batch_name)
     company = b.get("company")
     warehouse = b.get("warehouse")
@@ -576,90 +1151,11 @@ def export_opening_valuation_template(batch_name=None):
     if not warehouse:
         frappe.throw(_("Batch.warehouse is required"))
 
-    task_names = frappe.get_all(TASK_DT, filters={"batch": batch_name}, pluck="name")
-    if not task_names:
-        frappe.throw(_("No tasks linked to this batch"))
-
-    result_meta = frappe.get_meta(RESULT_DT)
-
-    fields = ["parent", "item_code", "counted_qty"]
-    if result_meta.has_field("bin_location"):
-        fields.append("bin_location")
-    if result_meta.has_field("location"):
-        fields.append("location")
-    if result_meta.has_field("carton_id"):
-        fields.append("carton_id")
-    if result_meta.has_field("carton"):
-        fields.append("carton")
-
-    dedupe_uuid_field = None
-    for cand in ["event_uuid", "offline_uuid", "sync_uuid", "uuid"]:
-        if result_meta.has_field(cand):
-            dedupe_uuid_field = cand
-            fields.append(cand)
-            break
-
-    res_rows = frappe.get_all(
-        RESULT_DT,
-        filters={
-            "parent": ["in", task_names],
-            "parenttype": TASK_DT,
-        },
-        fields=fields,
-        limit_page_length=200000,
-    )
-
-    if not res_rows:
-        frappe.throw(_("No result lines found for tasks in this batch"))
-
-    # 1) Dedupe by UUID (best)
-    if dedupe_uuid_field:
-        seen = set()
-        clean_rows = []
-        for r in res_rows:
-            uid = cstr(r.get(dedupe_uuid_field)).strip()
-            if not uid:
-                clean_rows.append(r)
-                continue
-            if uid in seen:
-                continue
-            seen.add(uid)
-            clean_rows.append(r)
-        res_rows = clean_rows
-
-    # 2) Else fallback dedupe by (task,item,loc,carton) -> keep MAX qty
-    else:
-        loc_field = "bin_location" if result_meta.has_field("bin_location") else ("location" if result_meta.has_field("location") else None)
-        carton_field = "carton_id" if result_meta.has_field("carton_id") else ("carton" if result_meta.has_field("carton") else None)
-
-        best = {}
-        for r in res_rows:
-            parent = cstr(r.get("parent")).strip()
-            item_code = cstr(r.get("item_code")).strip()
-            if not item_code:
-                continue
-            loc = cstr(r.get(loc_field)).strip() if loc_field else ""
-            carton = cstr(r.get(carton_field)).strip() if carton_field else ""
-            key = (parent, item_code, loc, carton)
-
-            qty = flt(r.get("counted_qty") or 0)
-            if key not in best or qty > best[key]:
-                best[key] = qty
-
-        res_rows = [{"item_code": k[1], "counted_qty": v} for k, v in best.items()]
-
-    # group by item_code
-    grouped = {}
-    for r in res_rows:
-        item_code = cstr(r.get("item_code")).strip()
-        if not item_code:
-            continue
-        grouped[item_code] = grouped.get(item_code, 0.0) + flt(r.get("counted_qty") or 0)
-
+    grouped = _aggregate_item_totals_from_batch(batch_name)
     if not grouped:
-        frappe.throw(_("No item totals to export"))
+        frappe.throw(_("No item totals to export for this batch"))
 
-    item_codes = list(grouped.keys())
+    item_codes = sorted(grouped.keys())
     item_info = {
         x["name"]: x
         for x in frappe.get_all(
@@ -668,10 +1164,11 @@ def export_opening_valuation_template(batch_name=None):
             fields=["name", "item_name", "stock_uom"],
         )
     }
+    currency = _company_currency(company)
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "Opening Valuation Upload"
+    ws.title = VERIFICATION_SHEET
 
     headers = [
         "company",
@@ -680,15 +1177,43 @@ def export_opening_valuation_template(batch_name=None):
         "item_code",
         "item_name",
         "uom",
-        "counted_qty_total",
+        "wms_previous_qty",
+        "counted_qty",
+        "wms_delta_qty",
+        "erp_current_qty",
+        "erp_delta_qty",
         "valuation_rate",
+        "erp_value_impact",
         "currency",
+        "override_reason",
         "remarks",
     ]
     ws.append(headers)
 
-    for item_code in sorted(item_codes):
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="2F5597")
+    missing_rate_fill = PatternFill("solid", fgColor="FFF2CC")
+    mismatch_fill = PatternFill("solid", fgColor="FCE4D6")
+
+    missing_rate_count = 0
+    erp_mismatch_count = 0
+    for item_code in item_codes:
+        totals = grouped[item_code]
+        wms_previous_qty = flt(totals.get("previous_qty"))
+        counted_qty = flt(totals.get("counted_qty"))
+        wms_delta_qty = flt(totals.get("delta_qty"))
+        erp_current_qty = _get_erp_bin_qty(item_code, warehouse)
+        erp_delta_qty = counted_qty - erp_current_qty
+        default_rate = _default_valuation_rate(item_code, warehouse, wms_previous_qty)
+        erp_value_impact = erp_delta_qty * default_rate if default_rate else 0.0
         inf = item_info.get(item_code, {})
+
+        if default_rate <= 0:
+            missing_rate_count += 1
+        if abs(wms_delta_qty - erp_delta_qty) > 0.000001:
+            erp_mismatch_count += 1
+
+        row_idx = ws.max_row + 1
         ws.append(
             [
                 company,
@@ -697,19 +1222,31 @@ def export_opening_valuation_template(batch_name=None):
                 item_code,
                 inf.get("item_name") or "",
                 inf.get("stock_uom") or "",
-                grouped.get(item_code, 0.0),
-                "",  # finance fills
-                "SAR",
-                f"Batch {batch_name}: fill valuation_rate for opening stock items",
+                wms_previous_qty,
+                counted_qty,
+                wms_delta_qty,
+                erp_current_qty,
+                erp_delta_qty,
+                default_rate if default_rate > 0 else "",
+                erp_value_impact if default_rate > 0 else "",
+                currency,
+                "",
+                f"Batch {batch_name}: do NOT change counted_qty; edit valuation_rate only",
             ]
         )
+        row_fill = None
+        if default_rate <= 0:
+            row_fill = missing_rate_fill
+        elif abs(wms_delta_qty - erp_delta_qty) > 0.000001:
+            row_fill = mismatch_fill
+        if row_fill:
+            for col in range(1, len(headers) + 1):
+                ws.cell(row=row_idx, column=col).fill = row_fill
 
-    header_font = Font(bold=True, color="FFFFFF")
-    fill = PatternFill("solid", fgColor="2F5597")
     for col, h in enumerate(headers, start=1):
         c = ws.cell(row=1, column=col)
         c.font = header_font
-        c.fill = fill
+        c.fill = header_fill
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         ws.column_dimensions[get_column_letter(col)].width = max(14, min(30, len(h) + 4))
 
@@ -717,15 +1254,27 @@ def export_opening_valuation_template(batch_name=None):
 
     ws2 = wb.create_sheet("README")
     readme = [
-        "Finance fills valuation_rate for opening stock items.",
-        "Upload this file using API 4: upload_opening_valuation_file.",
-        "Then run API 5 confirm_and_post_batch with is_opening=1.",
+        "Cycle Count Verification — item-level (grouped by item for ERP Stock Reconciliation).",
+        "1) Run Load Actual Stock Preview on the batch.",
+        "2) Finance verifies valuation_rate (counted_qty is locked to device totals).",
+        "3) Upload this file using 'Upload Verified Excel' to create Stock Reconciliation.",
+        "4) Confirm & Post Batch to update WMS Stock Balance.",
         "",
-        "Difference accounts (update in code if needed):",
-        f"- Opening: {OPENING_DIFFERENCE_ACCOUNT}",
-        f"- Adjustment: {ADJUSTMENT_DIFFERENCE_ACCOUNT}",
+        "IMPORTANT:",
+        "- counted_qty is the sum of all device/location counts for that item (e.g. 10+10=20).",
+        "- Do NOT edit counted_qty in Excel — upload is rejected if it differs from the batch.",
+        "- To fix wrong qty, correct on mobile and re-run Load Actual Stock Preview.",
+        "- Finance may override valuation_rate only.",
+        "Qty columns:",
+        "- wms_previous_qty / wms_delta_qty = WMS Stock Balance (warehouse operations).",
+        "- erp_current_qty / erp_delta_qty = ERP Bin qty (what Stock Reconciliation will adjust).",
+        "- erp_value_impact = erp_delta_qty x valuation_rate (actual accounting impact).",
         "",
-        "NOTE: Export dedupes Result lines to avoid double/triple qty caused by sync retries.",
+        "Row colors:",
+        "- Yellow: valuation_rate missing — finance must fill before upload.",
+        "- Orange: WMS delta differs from ERP delta — review before posting.",
+        "",
+        f"Difference account (adjustment): {ADJUSTMENT_DIFFERENCE_ACCOUNT}",
     ]
     for i, line in enumerate(readme, start=1):
         ws2.cell(row=i, column=1, value=line).alignment = Alignment(wrap_text=True)
@@ -735,7 +1284,7 @@ def export_opening_valuation_template(batch_name=None):
     wb.save(buff)
     data = buff.getvalue()
 
-    filename = f"Opening-Valuation-{batch_name}.xlsx"
+    filename = f"Cycle-Count-Verification-{batch_name}.xlsx"
     f = save_file(filename, data, BATCH_DT, batch_name, is_private=1)
 
     return {
@@ -745,38 +1294,37 @@ def export_opening_valuation_template(batch_name=None):
         "file_name": f.file_name,
         "file_url": f.file_url,
         "item_count": len(item_codes),
-        "dedupe_by": dedupe_uuid_field or "parent+item+location+carton(MAX)",
+        "missing_rate_count": missing_rate_count,
+        "erp_mismatch_count": erp_mismatch_count,
+        "sheet_name": VERIFICATION_SHEET,
     }
 
 
+@frappe.whitelist()
+def export_cycle_count_verification_template(batch_name=None):
+    """Alias for export_opening_valuation_template."""
+    return export_opening_valuation_template(batch_name)
+
 # ---------------------------------------------------------------------
-# API 4: Upload Valuation Excel -> Create Opening Stock SR
-# ---------------------------------------------------------------------
-# ---------------------------------------------------------------------
-# API 4: Upload Valuation Excel -> Create Opening Stock SR (FIXED)
+# API 4: Upload Verified Excel -> Create Stock Reconciliation (adjustment)
 # ---------------------------------------------------------------------
 @frappe.whitelist()
 def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, submit=1):
     """
-    Reads sheet "Opening Valuation Upload" and creates Stock Reconciliation (Opening Stock).
+    Read Cycle Count Verification Excel and create Stock Reconciliation (adjustment).
 
-    Fixes:
-    1) FIXED INDENTATION: file resolve runs even if batch_name is not provided
-    2) CRITICAL: DOES NOT call sr.insert() before adding items (prevents EmptyStockReconciliationItemsError)
-    3) Pre-check diffs (best effort) and returns friendly response if no change
-    4) Detects SR item qty/rate field names dynamically across ERPNext versions
+    Supports sheet 'Cycle Count Verification' (new) or 'Opening Valuation Upload' (legacy).
+    Uses counted_qty (or counted_qty_total) and finance-overridden valuation_rate.
     """
     import openpyxl
     from frappe.utils import cint, nowdate, flt, cstr
 
     submit = cint(submit or 1)
 
-    # ---- security (finance only) ----
     allowed_roles = {"Accounts Manager", "Stock Manager", "System Manager"}
     if not any(r in allowed_roles for r in frappe.get_roles(frappe.session.user)):
         frappe.throw(_("Not allowed. Finance/Stock Manager only."))
 
-    # ---- read params from request if missing ----
     if not file_url and not file_id:
         file_url = frappe.local.form_dict.get("file_url")
         file_id = frappe.local.form_dict.get("file_id")
@@ -786,12 +1334,11 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
     if not file_url and not file_id:
         frappe.throw(_("file_url or file_id is required"))
 
-    # ---- batch defaults ----
     batch_defaults = {}
     b = None
     user_diff_account = (
         frappe.local.form_dict.get("difference_account")
-        or frappe.local.form_dict.get("opening_difference_account")
+        or frappe.local.form_dict.get("adjustment_difference_account")
     )
 
     if batch_name:
@@ -802,25 +1349,19 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
             "posting_date": b.get("posting_date"),
         }
 
-        # prevent duplicate opening SR
-        if _meta_has(BATCH_DT, "opening_stock_reconciliation"):
-            existing_sr = (b.get("opening_stock_reconciliation") or "").strip()
+        if _meta_has(BATCH_DT, "stock_reconciliation"):
+            existing_sr = (b.get("stock_reconciliation") or "").strip()
             if existing_sr and frappe.db.exists("Stock Reconciliation", existing_sr):
                 frappe.throw(
                     _(
-                        "Opening Stock Reconciliation already done for this batch: {0}. "
+                        "Stock Reconciliation already linked for this batch: {0}. "
                         "Cancel that SR first if you need to create a new one."
                     ).format(existing_sr)
                 )
 
         if not user_diff_account and _meta_has(BATCH_DT, "difference_account"):
             user_diff_account = (b.get("difference_account") or "").strip() or None
-        if not user_diff_account and _meta_has(BATCH_DT, "opening_difference_account"):
-            user_diff_account = (b.get("opening_difference_account") or "").strip() or None
 
-    # -----------------------------------------------------------------
-    # FIXED: Resolve file path (NOT inside `if batch_name`)
-    # -----------------------------------------------------------------
     fdoc = None
     if file_id:
         fdoc = frappe.get_doc("File", file_id)
@@ -837,14 +1378,11 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
         frappe.throw(_("Could not resolve file. Provide file_id or file_url."))
 
     file_path = fdoc.get_full_path()
-
-    # -----------------------------------------------------------------
-    # Read Excel
-    # -----------------------------------------------------------------
     wb = openpyxl.load_workbook(file_path, data_only=True)
-    sheet_name = "Opening Valuation Upload"
+
+    sheet_name = VERIFICATION_SHEET if VERIFICATION_SHEET in wb.sheetnames else LEGACY_SHEET
     if sheet_name not in wb.sheetnames:
-        frappe.throw(_("Sheet '{0}' not found").format(sheet_name))
+        frappe.throw(_("Sheet '{0}' or '{1}' not found").format(VERIFICATION_SHEET, LEGACY_SHEET))
     ws = wb[sheet_name]
 
     header = [(c.value or "").strip() if isinstance(c.value, str) else (c.value or "") for c in ws[1]]
@@ -855,7 +1393,8 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
         except ValueError:
             return None
 
-    required_cols = ["company", "warehouse", "posting_date", "item_code", "counted_qty_total", "valuation_rate"]
+    counted_col = "counted_qty" if idx("counted_qty") is not None else "counted_qty_total"
+    required_cols = ["company", "warehouse", "posting_date", "item_code", counted_col, "valuation_rate"]
     for col in required_cols:
         if idx(col) is None:
             frappe.throw(_("Missing column in Excel: {0}").format(col))
@@ -874,7 +1413,7 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
         if isinstance(item_code, str):
             item_code = item_code.strip()
 
-        counted_qty = vals[idx("counted_qty_total")] or 0
+        counted_qty = vals[idx(counted_col)] or 0
         valuation_rate = vals[idx("valuation_rate")] or 0
 
         if not company or not warehouse:
@@ -885,7 +1424,7 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
         try:
             counted_qty = float(counted_qty or 0)
         except Exception:
-            frappe.throw(_("Row {0}: counted_qty_total must be a number").format(r))
+            frappe.throw(_("Row {0}: {1} must be a number").format(r, counted_col))
 
         try:
             valuation_rate = float(valuation_rate or 0)
@@ -893,9 +1432,9 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
             frappe.throw(_("Row {0}: valuation_rate must be a number").format(r))
 
         if counted_qty < 0:
-            frappe.throw(_("Row {0}: counted_qty_total cannot be negative").format(r))
+            frappe.throw(_("Row {0}: counted qty cannot be negative").format(r))
         if valuation_rate <= 0:
-            frappe.throw(_("Row {0}: valuation_rate is required (> 0)").format(r))
+            frappe.throw(_("Row {0}: valuation_rate is required (> 0) for item {1}").format(r, item_code))
 
         if not frappe.db.exists("Item", item_code):
             frappe.throw(_("Row {0}: Item not found: {1}").format(r, item_code))
@@ -917,16 +1456,12 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
     first_company = parsed[0]["company"]
     first_wh = parsed[0]["warehouse"]
     first_posting_date = parsed[0]["posting_date"] or nowdate()
-    posting_time = "00:00:00"  # opening safety
+    posting_time = nowtime()
 
-    # Safety: only one company+warehouse in file
     for x in parsed:
         if x["company"] != first_company or x["warehouse"] != first_wh:
             frappe.throw(_("Excel must contain one company + one warehouse only (for safety)."))
 
-    # -----------------------------------------------------------------
-    # Aggregate by item_code (sum qty, weighted avg rate)
-    # -----------------------------------------------------------------
     agg = {}
     for x in parsed:
         item = x["item_code"]
@@ -937,34 +1472,19 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
         agg[item]["qty"] += q
         agg[item]["total_val"] += q * v
 
+    if batch_name:
+        uploaded_totals = {item: flt(a["qty"]) for item, a in agg.items()}
+        _validate_upload_counts_match_batch(batch_name, uploaded_totals)
+
     rows = []
     for item, a in agg.items():
         qty = float(a["qty"] or 0)
         rate = (float(a["total_val"]) / qty) if qty else 0.0
         rows.append({"item_code": item, "qty": qty, "valuation_rate": rate})
 
-    # -----------------------------------------------------------------
-    # Difference Account (Opening must be Asset/Liability)
-    # -----------------------------------------------------------------
-    diff_acc = (cstr(user_diff_account).strip() or "") or _pick_difference_account(opening_entry=1)
+    diff_acc = (cstr(user_diff_account).strip() or "") or _pick_difference_account(opening_entry=0)
     _ensure_account_exists(diff_acc)
 
-    acc = frappe.db.get_value("Account", diff_acc, ["root_type", "company", "is_group", "disabled"], as_dict=True)
-    if not acc:
-        frappe.throw(_("Opening diff account not found: {0}").format(diff_acc))
-    if acc.company != first_company:
-        frappe.throw(_("Opening diff account company mismatch: {0}").format(diff_acc))
-    if cint(acc.is_group or 0) == 1:
-        frappe.throw(_("Opening diff account cannot be group: {0}").format(diff_acc))
-    if cint(acc.disabled or 0) == 1:
-        frappe.throw(_("Opening diff account is disabled: {0}").format(diff_acc))
-    if acc.root_type not in ("Asset", "Liability"):
-        frappe.throw(_("Opening Entry requires Asset/Liability account. {0} root_type={1}")
-                    .format(diff_acc, acc.root_type))
-
-    # -----------------------------------------------------------------
-    # Detect SR item fields (ERPNext version safe)
-    # -----------------------------------------------------------------
     SR_DT = "Stock Reconciliation"
     SR_ITEM_DT = "Stock Reconciliation Item"
     sr_meta = frappe.get_meta(SR_DT)
@@ -978,26 +1498,10 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
     if not val_field:
         frappe.throw(_("SR Item has no valuation_rate field."))
 
-    # -----------------------------------------------------------------
-    # OPTIONAL: Pre-check diffs (best effort)
-    # -----------------------------------------------------------------
-    def _snapshot(item_code: str):
-        # use helper from your file if exists; else fallback Bin
-        try:
-            return _get_stock_snapshot(item_code, first_wh, str(first_posting_date), posting_time)
-        except Exception:
-            b = frappe.db.get_value(
-                "Bin",
-                {"item_code": item_code, "warehouse": first_wh},
-                ["actual_qty", "valuation_rate"],
-                as_dict=True,
-            ) or {}
-            return flt(b.get("actual_qty") or 0), flt(b.get("valuation_rate") or 0)
-
     filtered = []
     no_change = []
     for x in sorted(rows, key=lambda z: z["item_code"]):
-        cur_qty, cur_rate = _snapshot(x["item_code"])
+        cur_qty, cur_rate = _get_stock_snapshot(x["item_code"], first_wh, str(first_posting_date), posting_time)
         new_qty = flt(x["qty"])
         new_rate = flt(x["valuation_rate"])
         if abs(new_qty - cur_qty) < 1e-9 and abs(new_rate - cur_rate) < 1e-9:
@@ -1028,9 +1532,6 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
 
     rows = filtered
 
-    # -----------------------------------------------------------------
-    # CRITICAL FIX: Create SR WITH ITEMS then insert
-    # -----------------------------------------------------------------
     sr = frappe.get_doc({"doctype": SR_DT})
 
     if sr_meta.has_field("company"):
@@ -1040,9 +1541,12 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
     if sr_meta.has_field("posting_time"):
         sr.posting_time = posting_time
     if sr_meta.has_field("purpose"):
-        sr.purpose = "Opening Stock"
+        df = sr_meta.get_field("purpose")
+        opts = [x.strip() for x in (df.options or "").split("\n") if x.strip()]
+        preferred = "Stock Reconciliation"
+        sr.purpose = preferred if preferred in opts else (opts[0] if opts else preferred)
     if sr_meta.has_field("opening_entry"):
-        sr.opening_entry = 1
+        sr.opening_entry = 0
     if sr_meta.has_field("set_warehouse"):
         sr.set_warehouse = first_wh
     if sr_meta.has_field("expense_account"):
@@ -1069,21 +1573,20 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
             },
         )
 
-    # Insert AFTER items exist (so validate doesn't see empty items)
     sr.insert(ignore_permissions=True)
 
     if submit:
         sr.submit()
 
-    # Link SR to batch
-    if batch_name and _meta_has(BATCH_DT, "opening_stock_reconciliation"):
+    if batch_name and _meta_has(BATCH_DT, "stock_reconciliation"):
         b = frappe.get_doc(BATCH_DT, batch_name)
-        b.opening_stock_reconciliation = sr.name
+        b.stock_reconciliation = sr.name
         b.save(ignore_permissions=True)
 
     return {
         "ok": True,
         "api_version": API_VERSION,
+        "mode": "adjustment",
         "sr": sr.name,
         "docstatus": sr.docstatus,
         "company": first_company,
@@ -1094,23 +1597,30 @@ def upload_opening_valuation_file(file_url=None, file_id=None, batch_name=None, 
         "row_count_in_sr": len(rows),
         "skipped_no_change_count": len(no_change),
         "skipped_sample": no_change[:10],
+        "sheet_name": sheet_name,
     }
 
+
+@frappe.whitelist()
+def upload_cycle_count_verification_file(file_url=None, file_id=None, batch_name=None, submit=1):
+    """Alias for upload_opening_valuation_file."""
+    return upload_opening_valuation_file(file_url=file_url, file_id=file_id, batch_name=batch_name, submit=submit)
 
 # ---------------------------------------------------------------------
 # API 5: Confirm & Post Batch
 # ---------------------------------------------------------------------
 @frappe.whitelist()
-def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=1, is_opening=0):
+def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=0, is_opening=0):
     """
-    FULL UPDATED API 5 (NO DUPLICATE SR + NO POPUP ERROR + POSTS ALWAYS)
+    Update WMS Stock Balance and link Stock Reconciliation from upload (API 4).
 
-    Key fixes:
-    1) If Batch already Posted -> return immediately (prevents double click / retry duplicates)
-    2) Opening mode (is_opening=1) -> NEVER create SR here (uses API4 SR)
-    3) Adjustment mode (is_opening=0):
-       - Reuse existing Batch.stock_reconciliation if already set
-       - When creating SR, catch ERPNext "None of the items have any change..." and SKIP SR (no throw)
+    Recommended flow:
+      1) load_actual_stock_preview
+      2) export_opening_valuation_template
+      3) upload_opening_valuation_file (creates SR)
+      4) confirm_and_post_batch (WMS balances; reuses linked SR)
+
+    create_stock_reconciliation=1 is a legacy fallback if SR was not uploaded first.
     """
     create_stock_reconciliation = cint(create_stock_reconciliation or 0)
     is_opening = cint(is_opening or 0)
@@ -1163,12 +1673,12 @@ def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=1, is_op
     # ------------------------------------------------------------------
     # 1) Load tasks + results
     # ------------------------------------------------------------------
-    task_names = frappe.get_all(TASK_DT, filters={"batch": batch_name}, pluck="name")
+    task_names = _tasks_for_batch_processing(batch_name)
     if not task_names:
-        frappe.throw(_("No tasks linked to this batch."))
+        frappe.throw(_("No tasks selected for posting on this batch (check Include in Post and task status)."))
 
     has_carton_id = _meta_has(RESULT_DT, "carton_id")
-    res_fields = ["item_code", "bin_location", "counted_qty"]
+    res_fields = ["name", "parent", "item_code", "bin_location", "counted_qty"]
     if has_carton_id:
         res_fields.append("carton_id")
 
@@ -1181,21 +1691,40 @@ def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=1, is_op
     if not res_rows:
         frappe.throw(_("No result lines found for tasks in this batch."))
 
+    task_modes = {}
+    if _meta_has(TASK_DT, "count_mode"):
+        for t in frappe.get_all(
+            TASK_DT, filters={"name": ["in", task_names]}, fields=["name", "count_mode"]
+        ):
+            task_modes[t.name] = _normalize_count_mode(t.get("count_mode"))
+
+    reconciliation_items: set[str] = set()
+    adhoc_location_items: set[tuple[str, str]] = set()
+    for r in res_rows:
+        parent = r.get("parent")
+        mode = task_modes.get(parent, "reconciliation")
+        item_code = (r.get("item_code") or "").strip()
+        location = (r.get("bin_location") or "").strip()
+        if not item_code or not location:
+            continue
+        if mode == "reconciliation":
+            reconciliation_items.add(item_code)
+        else:
+            adhoc_location_items.add((item_code, location))
+
     # ------------------------------------------------------------------
     # 2) Update WMS Stock Balance by (item, location, carton)
     # ------------------------------------------------------------------
-    wms_group = {}
-    for r in res_rows:
-        item_code = (r.get("item_code") or "").strip()
-        location = (r.get("bin_location") or "").strip()
-        carton = ((r.get("carton_id") if has_carton_id else None) or "").strip()
-        qty = float(r.get("counted_qty") or 0)
-
-        if not item_code or not location:
-            continue
-
-        key = (item_code, location, carton)
-        wms_group[key] = wms_group.get(key, 0.0) + qty
+    wms_group = _build_wms_count_map(res_rows, has_carton_id)
+    cleared_stale_cartons, cleared_cartons = _zero_stale_wms_cartons(
+        company,
+        warehouse,
+        wms_group,
+        nowdt,
+        batch_name=batch_name,
+        reconciliation_items=reconciliation_items,
+        adhoc_location_items=adhoc_location_items,
+    )
 
     updated_balances = 0
     for (item_code, location, carton_key), counted_qty in wms_group.items():
@@ -1210,12 +1739,13 @@ def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=1, is_op
         else:
             filters["carton"] = ["in", ["", None]]
 
-        existing = frappe.db.get_value(STOCK_BAL_DT, filters, "name")
+        existing = frappe.db.get_value(STOCK_BAL_DT, filters, ["name", "qty"], as_dict=True)
+        previous_qty = flt(existing.get("qty")) if existing else 0.0
 
         if existing:
-            frappe.db.set_value(STOCK_BAL_DT, existing, "qty", float(counted_qty), update_modified=False)
+            frappe.db.set_value(STOCK_BAL_DT, existing.name, "qty", float(counted_qty), update_modified=False)
             if _meta_has(STOCK_BAL_DT, "last_txn_datetime"):
-                frappe.db.set_value(STOCK_BAL_DT, existing, "last_txn_datetime", nowdt, update_modified=False)
+                frappe.db.set_value(STOCK_BAL_DT, existing.name, "last_txn_datetime", nowdt, update_modified=False)
         else:
             bal = frappe.get_doc(
                 {
@@ -1231,6 +1761,18 @@ def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=1, is_op
             if _meta_has(STOCK_BAL_DT, "last_txn_datetime"):
                 bal.last_txn_datetime = nowdt
             bal.insert(ignore_permissions=True)
+
+        _write_cycle_count_ledger_set(
+            company=company,
+            warehouse=warehouse,
+            batch_name=batch_name,
+            item_code=item_code,
+            location=location,
+            carton=(carton or "").strip(),
+            previous_qty=previous_qty,
+            new_qty=float(counted_qty),
+            nowdt=nowdt,
+        )
 
         updated_balances += 1
 
@@ -1310,20 +1852,17 @@ def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=1, is_op
 
                 sr.set("items", [])
 
+                item_totals = _aggregate_item_totals_from_batch(batch_name)
+
                 for item_code, counted_qty in erp_group.items():
-                    bin_row = frappe.db.get_value(
-                        "Bin",
-                        {"item_code": item_code, "warehouse": warehouse},
-                        ["valuation_rate"],
-                        as_dict=True,
-                    )
-                    vr = float((bin_row or {}).get("valuation_rate") or 0)
+                    previous_qty = flt((item_totals.get(item_code) or {}).get("previous_qty"))
+                    vr = _default_valuation_rate(item_code, warehouse, previous_qty)
 
                     if vr <= 0:
                         frappe.throw(
                             _(
                                 "Valuation missing for Item {0} in Warehouse {1}. "
-                                "If this is Opening Stock, run API 4 then call Confirm with is_opening=1."
+                                "Export verification Excel, fill valuation_rate, and upload before posting."
                             ).format(item_code, warehouse)
                         )
 
@@ -1357,8 +1896,15 @@ def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=1, is_op
     # ------------------------------------------------------------------
     # 4) Post the batch + tasks
     # ------------------------------------------------------------------
+    for tname in task_names:
+        if _meta_has(TASK_DT, "status"):
+            frappe.db.set_value(TASK_DT, tname, "status", "Posted", update_modified=False)
+        if _meta_has(TASK_DT, "sync_stage"):
+            frappe.db.set_value(TASK_DT, tname, "sync_stage", "Posted", update_modified=False)
+
     if _meta_has(BATCH_DT, "status"):
-        b.status = "Posted"
+        pending = frappe.db.count(TASK_DT, {"batch": batch_name, "status": ["!=", "Posted"]})
+        b.status = "Previewed" if pending else "Posted"
     if _meta_has(BATCH_DT, "posted_on"):
         b.posted_on = nowdt
     if _meta_has(BATCH_DT, "posted_by"):
@@ -1366,20 +1912,293 @@ def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=1, is_op
 
     b.save(ignore_permissions=True)
 
-    for tname in task_names:
-        if _meta_has(TASK_DT, "status"):
-            frappe.db.set_value(TASK_DT, tname, "status", "Posted", update_modified=False)
-        if _meta_has(TASK_DT, "sync_stage"):
-            frappe.db.set_value(TASK_DT, tname, "sync_stage", "Posted", update_modified=False)
-
     return {
         "ok": True,
         "api_version": API_VERSION,
         "batch": batch_name,
         "mode": "opening" if is_opening else "adjustment",
         "updated_balances": updated_balances,
+        "cleared_stale_cartons": cleared_stale_cartons,
+        "cleared_cartons": cleared_cartons,
         "sr": sr_name,
         "sr_note": sr_note,
         "difference_account_opening": OPENING_DIFFERENCE_ACCOUNT,
         "difference_account_adjustment": ADJUSTMENT_DIFFERENCE_ACCOUNT,
+    }
+
+
+# ---------------------------------------------------------------------
+# API 6: Desktop stock pull / batch sync
+# ---------------------------------------------------------------------
+@frappe.whitelist()
+def get_stock_balance_compact(
+    company=None,
+    warehouse=None,
+    item_code=None,
+    last_txn_after=None,
+    include_zero=0,
+    limit=500,
+    offset=0,
+):
+    """
+    Pull WMS Stock Balance for desktop incremental sync.
+
+    Desktop should call this after cycle count post (or periodically) using
+    last_txn_after cursor. Rows with qty=0 are included when last_txn_after
+    is set so cleared cartons can be removed locally.
+    """
+    company = (company or frappe.defaults.get_user_default("Company") or "").strip()
+    if not company:
+        frappe.throw(_("company is required"))
+
+    limit = cint(limit) or 500
+    offset = cint(offset) or 0
+    include_zero = cint(include_zero or 0)
+
+    filters = {"company": company}
+    if warehouse:
+        filters["warehouse"] = warehouse
+    if item_code:
+        filters["item_code"] = item_code
+    if last_txn_after:
+        filters["last_txn_datetime"] = (">", last_txn_after)
+    elif not include_zero:
+        filters["qty"] = [">", 0]
+
+    fields = [
+        "name",
+        "company",
+        "warehouse",
+        "item_code",
+        "location",
+        "carton",
+        "qty",
+        "reserved_qty",
+        "last_txn_datetime",
+        "modified",
+    ]
+
+    rows = frappe.get_all(
+        STOCK_BAL_DT,
+        filters=filters,
+        fields=fields,
+        order_by="last_txn_datetime asc, modified asc",
+        limit_start=offset,
+        limit_page_length=limit + 1,
+    )
+
+    has_more = len(rows) > limit
+    if has_more:
+        rows = rows[:limit]
+
+    next_cursor = None
+    if rows:
+        last = rows[-1]
+        next_cursor = last.get("last_txn_datetime") or last.get("modified")
+
+    return {
+        "ok": True,
+        "rows": rows,
+        "count": len(rows),
+        "has_more": has_more,
+        "next_last_txn_after": next_cursor,
+    }
+
+
+@frappe.whitelist()
+def get_cycle_count_stock_sync(batch_name: str):
+    """
+    Return server-side WMS stock truth for all items in a cycle count batch.
+    Desktop calls this after ERP posts the batch to reconcile local cache.
+    """
+    if not batch_name:
+        frappe.throw(_("batch_name is required"))
+
+    b = frappe.get_doc(BATCH_DT, batch_name)
+    company = (b.get("company") or "").strip()
+    warehouse = (b.get("warehouse") or "").strip()
+    if not company or not warehouse:
+        frappe.throw(_("Batch company/warehouse is required"))
+
+    item_codes = set()
+    if b.get("summary"):
+        for row in b.summary:
+            code = cstr(row.get("item_code")).strip()
+            if code:
+                item_codes.add(code)
+
+    if not item_codes:
+        task_names = frappe.get_all(TASK_DT, filters={"batch": batch_name}, pluck="name")
+        if task_names:
+            for row in frappe.get_all(
+                RESULT_DT,
+                filters={"parent": ["in", task_names]},
+                fields=["item_code"],
+                limit_page_length=200000,
+            ):
+                code = cstr(row.get("item_code")).strip()
+                if code:
+                    item_codes.add(code)
+
+    if not item_codes:
+        batch_status = (b.get("status") or "").strip()
+        ready = batch_status == "Posted"
+        return {
+            "ok": True,
+            "ready": ready,
+            "message": _("No items found for this batch."),
+            "batch": batch_name,
+            "status": batch_status,
+            "items": [],
+            "balances": [],
+            "cleared_cartons": [],
+        }
+
+    balances = frappe.get_all(
+        STOCK_BAL_DT,
+        filters={
+            "company": company,
+            "warehouse": warehouse,
+            "item_code": ["in", list(item_codes)],
+        },
+        fields=[
+            "name",
+            "item_code",
+            "location",
+            "carton",
+            "qty",
+            "reserved_qty",
+            "last_txn_datetime",
+        ],
+        order_by="item_code asc, location asc, carton asc",
+        limit_page_length=200000,
+    )
+
+    cleared_cartons = []
+    ledger_rows = frappe.get_all(
+        "WMS Stock Ledger Entry",
+        filters={
+            "voucher_doctype": BATCH_DT,
+            "voucher_name": batch_name,
+            "event_type": "CycleCount",
+            "qty_after": 0,
+        },
+        fields=["item_code", "location", "carton", "qty_change", "posting_datetime"],
+        limit_page_length=200000,
+    )
+    for row in ledger_rows:
+        cleared_cartons.append(
+            {
+                "item_code": row.get("item_code"),
+                "location": row.get("location"),
+                "carton": (row.get("carton") or "").strip(),
+                "previous_qty": abs(flt(row.get("qty_change"))),
+                "qty_after": 0,
+                "posting_datetime": row.get("posting_datetime"),
+            }
+        )
+
+    items_summary = {}
+    for bal in balances:
+        code = bal.get("item_code")
+        items_summary.setdefault(code, 0.0)
+        items_summary[code] += flt(bal.get("qty"))
+
+    batch_status = (b.get("status") or "").strip()
+    ready = batch_status == "Posted"
+
+    return {
+        "ok": True,
+        "ready": ready,
+        "message": (
+            _("Stock sync ready. Apply balances and cleared cartons locally.")
+            if ready
+            else _(
+                "Batch is not Posted on ERP yet. Complete Preview → Upload SR → Confirm & Post, then sync again."
+            )
+        ),
+        "batch": batch_name,
+        "status": batch_status,
+        "company": company,
+        "warehouse": warehouse,
+        "items": [
+            {"item_code": code, "wms_total_qty": qty}
+            for code, qty in sorted(items_summary.items())
+        ],
+        "balances": balances,
+        "cleared_cartons": cleared_cartons,
+    }
+
+
+@frappe.whitelist()
+def get_item_wms_stock_for_desktop(
+    item_code=None,
+    warehouse=None,
+    company=None,
+    include_zero=0,
+):
+    """Server truth for desktop Item list + Location Breakdown after cycle count post."""
+    item_code = cstr(item_code).strip()
+    if not item_code:
+        frappe.throw(_("item_code is required"))
+
+    company = (company or frappe.defaults.get_user_default("Company") or "").strip()
+    warehouse = cstr(warehouse).strip()
+    include_zero = cint(include_zero or 0)
+
+    filters = {"item_code": item_code}
+    if company:
+        filters["company"] = company
+    if warehouse:
+        filters["warehouse"] = warehouse
+    if not include_zero:
+        filters["qty"] = [">", 0]
+
+    rows = frappe.get_all(
+        STOCK_BAL_DT,
+        filters=filters,
+        fields=[
+            "name",
+            "company",
+            "warehouse",
+            "item_code",
+            "location",
+            "carton",
+            "qty",
+            "reserved_qty",
+            "last_txn_datetime",
+            "modified",
+        ],
+        order_by="location asc, carton asc",
+        limit_page_length=2000,
+    )
+
+    total_qty = 0.0
+    breakdown = []
+    for r in rows:
+        qty = flt(r.get("qty"))
+        reserved = flt(r.get("reserved_qty"))
+        total_qty += qty
+        breakdown.append(
+            {
+                "location_id": r.get("location"),
+                "carton_id": (r.get("carton") or "").strip(),
+                "warehouse": r.get("warehouse"),
+                "in_qty": 0,
+                "out_qty": 0,
+                "balance_qty": qty,
+                "reserved_qty": reserved,
+                "available_qty": qty - reserved,
+                "last_txn_datetime": r.get("last_txn_datetime"),
+            }
+        )
+
+    return {
+        "ok": True,
+        "item_code": item_code,
+        "company": company,
+        "warehouse": warehouse or None,
+        "total_balance_qty": total_qty,
+        "rows": breakdown,
+        "count": len(breakdown),
     }

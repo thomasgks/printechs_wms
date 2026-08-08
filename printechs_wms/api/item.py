@@ -170,6 +170,32 @@ def _fetch_barcodes_for_items(item_names: list[str]) -> dict[str, list[str]]:
     return out
 
 
+def _fetch_wms_item_totals(item_codes: list[str], company: str, warehouse: str) -> dict[str, dict]:
+    """Sum WMS Stock Balance qty per item for desktop item list."""
+    if not item_codes or not warehouse:
+        return {}
+
+    rows = frappe.get_all(
+        "WMS Stock Balance",
+        filters={
+            "item_code": ["in", item_codes],
+            "warehouse": warehouse,
+            **({"company": company} if company else {}),
+        },
+        fields=["item_code", "qty", "reserved_qty"],
+        limit_page_length=200000,
+    )
+    out: dict[str, dict] = {}
+    for row in rows:
+        code = row.get("item_code")
+        if not code:
+            continue
+        bucket = out.setdefault(code, {"qty": 0.0, "reserved_qty": 0.0})
+        bucket["qty"] += float(row.get("qty") or 0)
+        bucket["reserved_qty"] += float(row.get("reserved_qty") or 0)
+    return out
+
+
 @frappe.whitelist()
 def get_items_compact(
     filters=None,
@@ -178,7 +204,10 @@ def get_items_compact(
     offset=0,
     custom_wms_modified_after=None,
     attribute_filters=None,
-    flatten_attributes=1
+    flatten_attributes=1,
+    include_wms_stock=0,
+    warehouse=None,
+    company=None,
 ):
     filters = _ensure_dict(filters)
     fields = _ensure_list(fields)
@@ -187,6 +216,9 @@ def get_items_compact(
     limit = cint(limit) or 100
     offset = cint(offset) or 0
     flatten_attributes = cint(flatten_attributes) if str(flatten_attributes).strip() != "" else 1
+    include_wms_stock = cint(include_wms_stock or frappe.form_dict.get("include_wms_stock") or 0)
+    warehouse = (warehouse or frappe.form_dict.get("warehouse") or frappe.form_dict.get("wms_warehouse") or "").strip()
+    company = (company or frappe.form_dict.get("company") or frappe.defaults.get_user_default("Company") or "").strip()
 
     # Default returned fields if not requested
     if not fields:
@@ -207,6 +239,9 @@ def get_items_compact(
 
     # Barcode is NOT a column in your tabItem; handle separately via Item Barcode child table.
     wants_barcode = any(isinstance(f, str) and f.lower() == "barcode" for f in fields)
+    wants_stock_qty = any(isinstance(f, str) and f.lower() in ("stock_qty", "wms_stock_qty") for f in fields)
+    wants_reserved_qty = any(isinstance(f, str) and f.lower() == "reserved_qty" for f in fields)
+    attach_wms_stock = include_wms_stock or wants_stock_qty or wants_reserved_qty
 
     # Build DB fields list (only real columns)
     db_fields = []
@@ -269,6 +304,10 @@ def get_items_compact(
     if wants_barcode:
         barcodes_by_item = _fetch_barcodes_for_items(item_names)
 
+    wms_totals_by_item = {}
+    if attach_wms_stock and item_names and warehouse:
+        wms_totals_by_item = _fetch_wms_item_totals(item_names, company, warehouse)
+
     out_items = []
     for r in rows:
         data = dict(r)
@@ -287,6 +326,14 @@ def get_items_compact(
         if wants_barcode:
             bcs = barcodes_by_item.get(data.get("name"), [])
             data["barcode"] = bcs[0] if bcs else None
+
+        if attach_wms_stock and warehouse:
+            code = data.get("item_code") or data.get("name")
+            totals = wms_totals_by_item.get(code) or {"qty": 0.0, "reserved_qty": 0.0}
+            if include_wms_stock or wants_stock_qty:
+                data["stock_qty"] = totals.get("qty", 0.0)
+            if include_wms_stock or wants_reserved_qty:
+                data["reserved_qty"] = totals.get("reserved_qty", 0.0)
 
         # Remove internal fields if not requested
         if "name" not in fields:

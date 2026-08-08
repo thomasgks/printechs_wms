@@ -4,7 +4,8 @@ from __future__ import annotations
 import json
 import frappe
 from frappe import _
-from frappe.utils import nowdate, nowtime, getdate
+from frappe.utils import nowdate, nowtime, getdate, flt
+from erpnext.stock.doctype.stock_entry.stock_entry import make_stock_in_entry
 
 API_VERSION = "1.0.0"
 
@@ -174,6 +175,14 @@ def _find_existing_receipt(in_transit_se: str) -> str | None:
     if not in_transit_se:
         return None
 
+    se = frappe.db.get_value(
+        "Stock Entry",
+        {"outgoing_stock_entry": in_transit_se, "docstatus": ["!=", 2]},
+        "name",
+    )
+    if se:
+        return se
+
     # Prefer explicit link fields on Stock Entry
     if _has_column("Stock Entry", "custom_in_transit_stock_entry"):
         se = frappe.db.get_value(
@@ -228,76 +237,50 @@ def _create_receipt_from_intransit(in_transit_se: str, receiving_warehouse: str,
     Create receipt Stock Entry that moves stock:
       Transit Warehouse  -> Receiving Warehouse
 
-    Uses the submitted in-transit Stock Entry as the source of items and qty.
+    Uses ERPNext's standard in-transit linkage so the source entry's
+    per_transferred reaches 100% and the End Transit button is hidden.
     """
     in_se = frappe.get_doc("Stock Entry", in_transit_se)
 
     if int(in_se.docstatus or 0) != 1:
         frappe.throw(_("In-transit Stock Entry must be submitted: {0}").format(in_transit_se))
 
-    # Optional sanity: must be a transfer-to-transit kind of entry
-    # (do not hard-fail to keep compatibility; only validate minimum needed)
     if not in_se.items:
         frappe.throw(_("In-transit Stock Entry has no items: {0}").format(in_transit_se))
 
+    if flt(in_se.per_transferred) >= 100:
+        existing = _find_existing_receipt(in_transit_se)
+        if existing:
+            return frappe.get_doc("Stock Entry", existing)
+        frappe.throw(_("In-transit Stock Entry is already fully received: {0}").format(in_transit_se))
+
+    receipt = make_stock_in_entry(in_transit_se)
+    if isinstance(receipt, dict):
+        receipt = frappe.get_doc(receipt)
+
+    if not receipt.items:
+        existing = _find_existing_receipt(in_transit_se)
+        if existing:
+            return frappe.get_doc("Stock Entry", existing)
+        frappe.throw(_("No pending quantity left to receive for {0}").format(in_transit_se))
+
     transit_wh = _detect_transit_source_warehouse(in_se)
-    if not transit_wh:
-        # still can derive per row t_warehouse, but we want at least one
-        transit_wh = _cstr(in_se.items[0].get("t_warehouse"))
-
-    if not transit_wh:
-        frappe.throw(_("Could not detect Transit warehouse from Stock Entry {0}").format(in_transit_se))
-
-    # Build receipt
-    receipt = frappe.new_doc("Stock Entry")
-    receipt.stock_entry_type = "Material Transfer"
-    receipt.company = in_se.company
-
-    # posting date/time (default now)
     receipt.posting_date = getdate(_get_first(payload, "posting_date", default=None) or nowdate())
     receipt.posting_time = _get_first(payload, "posting_time", default=None) or nowtime()
     receipt.set_posting_time = 1
 
-    # header warehouses where available (nice-to-have)
-    if hasattr(receipt, "from_warehouse"):
+    base_remarks = _cstr(_get_first(payload, "remarks", default="")) or _cstr(in_se.remarks)
+    receipt.remarks = (base_remarks or "").strip()
+
+    if hasattr(receipt, "from_warehouse") and transit_wh:
         receipt.from_warehouse = transit_wh
     if hasattr(receipt, "to_warehouse"):
         receipt.to_warehouse = receiving_warehouse
 
-    # remarks
-    base_remarks = _cstr(_get_first(payload, "remarks", default="")) or _cstr(in_se.remarks)
-    receipt.remarks = (base_remarks or "").strip()
+    for row in receipt.items:
+        row.t_warehouse = receiving_warehouse
 
-    # link back for idempotency
     _ensure_receipt_link(receipt, in_transit_se)
-
-    # Copy items (qty same as in-transit SE)
-    for r in in_se.items:
-        item_code = _cstr(r.get("item_code"))
-        qty = float(r.get("qty") or 0)
-
-        if not item_code or qty <= 0:
-            continue
-
-        d = receipt.append("items", {})
-        d.item_code = item_code
-        d.qty = qty
-
-        # Move from Transit -> Receiving
-        d.s_warehouse = transit_wh
-        d.t_warehouse = receiving_warehouse
-
-        # Optional: preserve batch/serial where possible
-        if r.get("batch_no") and hasattr(d, "batch_no"):
-            d.batch_no = r.get("batch_no")
-        if r.get("serial_no") and hasattr(d, "serial_no"):
-            d.serial_no = r.get("serial_no")
-
-        # Optional: keep MR references if present (helps traceability)
-        if r.get("material_request") and hasattr(d, "material_request"):
-            d.material_request = r.get("material_request")
-        if r.get("material_request_item") and hasattr(d, "material_request_item"):
-            d.material_request_item = r.get("material_request_item")
 
     receipt.insert(ignore_permissions=True)
 

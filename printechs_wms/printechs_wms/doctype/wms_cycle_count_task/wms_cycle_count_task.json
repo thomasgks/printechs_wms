@@ -16,6 +16,7 @@
   "sync_status",
   "external_ref",
   "erp_posting_ref",
+  "count_mode",
   "results"
  ],
  "fields": [
@@ -78,6 +79,14 @@
    "fieldname": "erp_posting_ref",
    "fieldtype": "Data",
    "label": "ERP Posting Ref"
+  },
+  {
+   "default": "Reconciliation",
+   "fieldname": "count_mode",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Count Mode",
+   "options": "Reconciliation\nAdhoc Add"
   },
   {
    "fieldname": "results",
