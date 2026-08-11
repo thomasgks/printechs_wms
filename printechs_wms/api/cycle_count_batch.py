@@ -4,10 +4,14 @@ cycle_count_batch.py
 
 APIs included:
 1) sync_task_capture_only(payload)              -> capture task + replace results safely (no duplicates)
+                                              -> optional task.counted_by (User), task.device_id (audit)
 2) load_actual_stock_preview(batch_name)        -> compute system_qty/delta + fill Batch Summary
 3) export_opening_valuation_template(batch_name)-> export item-level verification Excel for finance
 4) upload_opening_valuation_file(...)           -> read excel + create Stock Reconciliation (adjustment)
 5) confirm_and_post_batch(...)                  -> update WMS Stock Balance + link uploaded SR
+6) get_cycle_count_batches_for_wms(...)         -> list batches for Desktop master list
+7) get_cycle_count_batch_detail_for_wms(...)    -> batch header + tasks for Desktop detail
+8) get_cycle_count_task_detail_for_wms(...)     -> task header + result lines for Desktop drill-down
 
 Notes:
 - FIXED: API4 file path indentation bug (file always resolves)
@@ -38,7 +42,7 @@ BATCH_DT = "WMS Cycle Count Batch"
 SUMMARY_CHILD_DT = "WMS Cycle Count Batch Summary"
 STOCK_BAL_DT = "WMS Stock Balance"
 
-API_VERSION = "cycle_count_batch_v9_type_safe_all"
+API_VERSION = "cycle_count_batch_v10_task_audit"
 
 VERIFICATION_SHEET = "Cycle Count Verification"
 LEGACY_SHEET = "Opening Valuation Upload"
@@ -63,6 +67,16 @@ def _meta_has(dt: str, fieldname: str) -> bool:
         return _get_meta(dt).has_field(fieldname)
     except Exception:
         return False
+
+
+def _task_result_dt() -> str:
+    try:
+        tf = frappe.get_meta(TASK_DT).get_field("results")
+        if tf and getattr(tf, "options", None):
+            return tf.options
+    except Exception:
+        pass
+    return RESULT_DT
 
 
 def _safe_float(v) -> float:
@@ -807,8 +821,128 @@ def _company_currency(company: str) -> str:
 
 
 # ---------------------------------------------------------------------
-# API 1: Desktop -> Capture Task (REPLACE results, NO append)
+# API 1: Desktop/Mobile -> Capture Task (REPLACE results, NO append)
 # ---------------------------------------------------------------------
+_DEVICE_ID_KEYS = (
+    "device_id",
+    "mobile_device_id",
+    "deviceId",
+    "device_code",
+    "active_device_id",
+    "activeDeviceId",
+)
+
+
+def _device_id_from_mapping(data: dict | None) -> tuple[str | None, bool]:
+    """Return (value, provided). provided=False means key absent — do not overwrite."""
+    if not isinstance(data, dict):
+        return None, False
+    for key in _DEVICE_ID_KEYS:
+        if key in data:
+            return cstr(data.get(key)).strip() or None, True
+    return None, False
+
+
+def _merge_push_capture_identity(task: dict, payload: dict | None) -> dict:
+    """Mobile may send counted_by / device_id on task and/or payload root."""
+    merged = dict(task or {})
+    root = payload if isinstance(payload, dict) else {}
+
+    if not cstr(merged.get("counted_by") or merged.get("user_code")).strip():
+        counted_by = cstr(root.get("counted_by") or root.get("user_code")).strip()
+        if counted_by:
+            merged["counted_by"] = counted_by
+
+    device_val, device_provided = _device_id_from_mapping(merged)
+    if not device_provided:
+        device_val, device_provided = _device_id_from_mapping(root)
+        if device_provided:
+            merged["device_id"] = device_val
+
+    return merged
+
+
+def _normalize_push_capture_payload(raw) -> dict:
+    """Accept dict or JSON string from mobile/middleware POST body."""
+    if not raw:
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = frappe.parse_json(raw)
+        except Exception:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    return raw
+
+
+def _normalize_push_capture_task(raw) -> dict:
+    if isinstance(raw, str):
+        try:
+            raw = frappe.parse_json(raw)
+        except Exception:
+            return {}
+    return dict(raw or {}) if isinstance(raw, dict) else {}
+
+
+def _apply_task_audit_fields(doc, task: dict, payload: dict | None = None):
+    """Optional counted_by (User link) and device_id from push-capture payload."""
+    task = _merge_push_capture_identity(task, payload)
+    if not isinstance(task, dict):
+        return task
+
+    if _meta_has(TASK_DT, "counted_by") and ("counted_by" in task or "user_code" in task):
+        counted_by = cstr(task.get("counted_by") or task.get("user_code")).strip()
+        if counted_by:
+            if not frappe.db.exists("User", counted_by):
+                frappe.throw(_("counted_by user {0} not found.").format(counted_by))
+            doc.counted_by = counted_by
+        else:
+            doc.counted_by = None
+
+    device_val, device_provided = _device_id_from_mapping(task)
+    if _meta_has(TASK_DT, "device_id") and device_provided:
+        doc.device_id = device_val
+
+    return task
+
+
+def _persist_task_audit_fields(task_name: str, task: dict, payload: dict | None = None) -> dict:
+    """Persist audit fields with db_set so they survive reload/save quirks."""
+    task = _merge_push_capture_identity(task, payload)
+    saved: dict = {}
+
+    if not task_name:
+        return saved
+
+    if _meta_has(TASK_DT, "counted_by") and ("counted_by" in task or "user_code" in task):
+        counted_by = cstr(task.get("counted_by") or task.get("user_code")).strip()
+        if counted_by:
+            if not frappe.db.exists("User", counted_by):
+                frappe.throw(_("counted_by user {0} not found.").format(counted_by))
+        frappe.db.set_value(
+            TASK_DT,
+            task_name,
+            "counted_by",
+            counted_by or None,
+            update_modified=False,
+        )
+        saved["counted_by"] = counted_by or None
+
+    device_val, device_provided = _device_id_from_mapping(task)
+    if _meta_has(TASK_DT, "device_id") and device_provided:
+        frappe.db.set_value(
+            TASK_DT,
+            task_name,
+            "device_id",
+            device_val,
+            update_modified=False,
+        )
+        saved["device_id"] = device_val
+
+    return saved
+
+
 @frappe.whitelist()
 def sync_task_capture_only(payload: dict | None = None):
     """
@@ -818,9 +952,15 @@ def sync_task_capture_only(payload: dict | None = None):
     """
     if payload is None:
         payload = frappe.local.form_dict.get("payload") or frappe.local.form_dict or {}
+    payload = _normalize_push_capture_payload(payload)
 
-    task = payload.get("task") or payload.get("header") or payload.get("task_header") or payload
+    task = _normalize_push_capture_task(
+        payload.get("task") or payload.get("header") or payload.get("task_header") or payload
+    )
     lines = payload.get("lines") or payload.get("results") or payload.get("items") or []
+    if isinstance(lines, str):
+        lines = frappe.parse_json(lines) or []
+    task = _merge_push_capture_identity(task, payload)
 
     if not isinstance(task, dict):
         frappe.throw(_("Invalid payload.task/header (must be dict)."))
@@ -896,7 +1036,13 @@ def sync_task_capture_only(payload: dict | None = None):
     if existing_name:
         doc = frappe.get_doc(TASK_DT, existing_name)
 
-        # update header
+        # delete all existing child rows to avoid append duplicates
+        _delete_existing_child_rows(doc.name)
+        frappe.db.commit()
+        doc.reload()
+        doc.set("results", [])
+
+        # Header + audit fields (must be after reload(); reload wipes unsaved changes)
         doc.company = company
         doc.warehouse = warehouse
         doc.warehouse_code = warehouse_code
@@ -914,12 +1060,7 @@ def sync_task_capture_only(payload: dict | None = None):
             doc.count_mode = "Adhoc Add" if count_mode == "adhoc_add" else "Reconciliation"
         if _meta_has(TASK_DT, "include_in_post"):
             doc.include_in_post = 1
-
-        # delete all existing child rows to avoid append duplicates
-        _delete_existing_child_rows(doc.name)
-        frappe.db.commit()
-        doc.reload()
-        doc.set("results", [])
+        _apply_task_audit_fields(doc, task, payload)
 
         # rebuild results
         if isinstance(lines, list):
@@ -978,6 +1119,7 @@ def sync_task_capture_only(payload: dict | None = None):
             doc.count_mode = "Adhoc Add" if count_mode == "adhoc_add" else "Reconciliation"
         if _meta_has(TASK_DT, "include_in_post"):
             doc.include_in_post = 1
+        _apply_task_audit_fields(doc, task, payload)
 
         if isinstance(lines, list):
             for i, row in enumerate(lines, start=1):
@@ -1015,7 +1157,13 @@ def sync_task_capture_only(payload: dict | None = None):
 
     batch_name = link_task_to_batch(doc)
 
-    return {
+    audit_saved = _persist_task_audit_fields(doc.name, task, payload)
+    frappe.db.commit()
+
+    merged_task = _merge_push_capture_identity(task, payload)
+    _dev_val, _dev_provided = _device_id_from_mapping(merged_task)
+
+    resp = {
         "ok": True,
         "api_version": API_VERSION,
         "task": doc.name,
@@ -1024,6 +1172,22 @@ def sync_task_capture_only(payload: dict | None = None):
         "count_mode": count_mode,
         "updated_lines": updated_lines,
     }
+    if _meta_has(TASK_DT, "counted_by"):
+        resp["counted_by"] = audit_saved.get("counted_by", frappe.db.get_value(TASK_DT, doc.name, "counted_by"))
+    if _meta_has(TASK_DT, "device_id"):
+        resp["device_id"] = audit_saved.get(
+            "device_id",
+            frappe.db.get_value(TASK_DT, doc.name, "device_id"),
+        )
+    resp["audit_debug"] = {
+        "field_exists": bool(_meta_has(TASK_DT, "device_id")),
+        "received_in_task": cstr(merged_task.get("device_id")).strip() or None,
+        "received_mobile_device_id": cstr(merged_task.get("mobile_device_id")).strip() or None,
+        "received_in_payload_root": cstr(payload.get("device_id") if isinstance(payload, dict) else "").strip() or None,
+        "device_provided": _dev_provided,
+        "persisted_device_id": frappe.db.get_value(TASK_DT, doc.name, "device_id") if doc.name else None,
+    }
+    return resp
 
 
 # ---------------------------------------------------------------------
@@ -2236,4 +2400,264 @@ def get_item_wms_stock_for_desktop(
         "total_balance_qty": total_qty,
         "rows": breakdown,
         "count": len(breakdown),
+    }
+
+
+# ---------------------------------------------------------------------
+# Desktop: batch list + detail (ERP master)
+# ---------------------------------------------------------------------
+def _batch_fields_for_wms() -> list[str]:
+    fields = ["name", "status", "company", "warehouse", "posting_date", "modified"]
+    for fn in ("warehouse_code", "posted_on", "posted_by", "stock_reconciliation"):
+        if _meta_has(BATCH_DT, fn):
+            fields.append(fn)
+    return fields
+
+
+def _batch_row_for_wms(batch_name: str) -> dict:
+    if not frappe.db.exists(BATCH_DT, batch_name):
+        frappe.throw(_("Batch {0} not found.").format(batch_name))
+    rows = frappe.get_all(
+        BATCH_DT,
+        filters={"name": batch_name},
+        fields=_batch_fields_for_wms(),
+        limit_page_length=1,
+    )
+    return rows[0] if rows else {}
+
+
+def _serialize_batch_for_wms(row: dict | None, task_count: int = 0) -> dict:
+    if not row:
+        return {}
+    out = {
+        "batch_name": row.get("name"),
+        "status": (row.get("status") or "").strip() or "Draft",
+        "company": row.get("company"),
+        "warehouse": row.get("warehouse"),
+        "warehouse_code": row.get("warehouse_code"),
+        "posting_date": str(row.get("posting_date") or "")[:10] or None,
+        "posted_on": str(row.get("posted_on") or "") or None,
+        "posted_by": row.get("posted_by"),
+        "task_count": cint(task_count),
+        "modified": str(row.get("modified") or "") or None,
+    }
+    if _meta_has(BATCH_DT, "stock_reconciliation"):
+        out["stock_reconciliation"] = row.get("stock_reconciliation")
+    return out
+
+
+def _task_fields_for_wms(include_batch: bool = False) -> list[str]:
+    fields = ["name", "posting_date", "status", "external_ref", "modified"]
+    if include_batch and _meta_has(TASK_DT, "batch"):
+        fields.append("batch")
+    if _meta_has(TASK_DT, "count_mode"):
+        fields.append("count_mode")
+    if _meta_has(TASK_DT, "include_in_post"):
+        fields.append("include_in_post")
+    if _meta_has(TASK_DT, "counted_by"):
+        fields.append("counted_by")
+    if _meta_has(TASK_DT, "device_id"):
+        fields.append("device_id")
+    return fields
+
+
+def _result_line_fields_for_wms(result_dt: str) -> list[str]:
+    line_fields = ["name", "item_code", "bin_location", "counted_qty"]
+    for fn in ("system_qty", "delta_qty", "carton_id", "uom", "has_discrepancy"):
+        if _meta_has(result_dt, fn):
+            line_fields.append(fn)
+    return line_fields
+
+
+def _serialize_task_line_for_wms(line_row: dict) -> dict:
+    out = {
+        "item_code": line_row.get("item_code"),
+        "bin_location": line_row.get("bin_location"),
+        "system_qty": flt(line_row.get("system_qty")),
+        "counted_qty": flt(line_row.get("counted_qty")),
+        "delta_qty": flt(line_row.get("delta_qty")),
+    }
+    if "carton_id" in line_row:
+        out["carton_id"] = line_row.get("carton_id")
+    if "uom" in line_row:
+        out["uom"] = line_row.get("uom")
+    if "has_discrepancy" in line_row:
+        out["has_discrepancy"] = cint(line_row.get("has_discrepancy"))
+    return out
+
+
+def _serialize_task_for_wms(task_row: dict, line_count: int = 0) -> dict:
+    count_mode = "Reconciliation"
+    if _meta_has(TASK_DT, "count_mode"):
+        count_mode = (task_row.get("count_mode") or "").strip() or "Reconciliation"
+    include_for_post = 1
+    if _meta_has(TASK_DT, "include_in_post"):
+        include_for_post = cint(task_row.get("include_in_post", 1))
+    out = {
+        "task": task_row.get("name"),
+        "posting_date": str(task_row.get("posting_date") or "")[:10] or None,
+        "status": (task_row.get("status") or "").strip() or "",
+        "count_mode": count_mode,
+        "lines": cint(line_count),
+        "external_ref": (task_row.get("external_ref") or "").strip() or None,
+        "include_for_post": include_for_post,
+    }
+    if _meta_has(TASK_DT, "counted_by"):
+        out["counted_by"] = task_row.get("counted_by")
+    if _meta_has(TASK_DT, "device_id"):
+        out["device_id"] = (task_row.get("device_id") or "").strip() or None
+    return out
+
+
+@frappe.whitelist()
+def get_cycle_count_batches_for_wms(
+    warehouse_code: str | None = None,
+    status: str | None = None,
+    limit: int | None = 100,
+):
+    """List WMS cycle count batches for Desktop (ERP is master)."""
+    warehouse_code = (warehouse_code or frappe.form_dict.get("warehouse_code") or "").strip()
+    status = (status or frappe.form_dict.get("status") or "").strip()
+    limit = cint(limit or frappe.form_dict.get("limit") or 100)
+    limit = max(1, min(limit, 500))
+
+    if warehouse_code and not _meta_has(BATCH_DT, "warehouse_code"):
+        frappe.throw(_("warehouse_code filter is not available on this site."))
+
+    filters = {}
+    if warehouse_code:
+        filters["warehouse_code"] = warehouse_code
+    if status:
+        filters["status"] = status
+
+    rows = frappe.get_all(
+        BATCH_DT,
+        filters=filters,
+        fields=_batch_fields_for_wms(),
+        order_by="modified desc",
+        limit_page_length=limit,
+    )
+
+    out = []
+    for row in rows or []:
+        task_count = frappe.db.count(TASK_DT, {"batch": row.name})
+        out.append(_serialize_batch_for_wms(row, task_count))
+
+    return {
+        "ok": True,
+        "api_version": API_VERSION,
+        "batches": out,
+        "count": len(out),
+    }
+
+
+@frappe.whitelist()
+def get_cycle_count_batch_detail_for_wms(batch_name: str | None = None):
+    """Batch header + linked ERP tasks for Desktop master-detail view."""
+    batch_name = (batch_name or frappe.form_dict.get("batch_name") or "").strip()
+    if not batch_name:
+        frappe.throw(_("batch_name is required."))
+
+    batch_row = _batch_row_for_wms(batch_name)
+    result_dt = _task_result_dt()
+
+    task_rows = frappe.get_all(
+        TASK_DT,
+        filters={"batch": batch_name},
+        fields=_task_fields_for_wms(),
+        order_by="modified desc",
+        limit_page_length=200000,
+    )
+
+    tasks = []
+    for tr in task_rows or []:
+        line_count = frappe.db.count(result_dt, {"parent": tr.name})
+        tasks.append(_serialize_task_for_wms(tr, line_count))
+
+    return {
+        "ok": True,
+        "api_version": API_VERSION,
+        "batch": _serialize_batch_for_wms(batch_row, len(tasks)),
+        "tasks": tasks,
+        "task_count": len(tasks),
+    }
+
+
+@frappe.whitelist()
+def get_cycle_count_task_detail_for_wms(task_name: str | None = None):
+    """Task header + result lines for Desktop drill-down (read-only)."""
+    task_name = (task_name or frappe.form_dict.get("task_name") or "").strip()
+    if not task_name:
+        frappe.throw(_("task_name is required."))
+
+    if not frappe.db.exists(TASK_DT, task_name):
+        frappe.throw(_("Task {0} not found.").format(task_name))
+
+    task_rows = frappe.get_all(
+        TASK_DT,
+        filters={"name": task_name},
+        fields=_task_fields_for_wms(include_batch=True),
+        limit_page_length=1,
+    )
+    task_row = task_rows[0] if task_rows else {}
+    result_dt = _task_result_dt()
+
+    line_rows = frappe.get_all(
+        result_dt,
+        filters={"parent": task_name},
+        fields=_result_line_fields_for_wms(result_dt),
+        order_by="idx asc",
+        limit_page_length=200000,
+    )
+
+    lines = [_serialize_task_line_for_wms(r) for r in (line_rows or [])]
+    batch_name = (task_row.get("batch") or "").strip() or None
+
+    return {
+        "ok": True,
+        "api_version": API_VERSION,
+        "batch_name": batch_name,
+        "task": _serialize_task_for_wms(task_row, len(lines)),
+        "lines": lines,
+        "line_count": len(lines),
+    }
+
+
+@frappe.whitelist()
+def get_cycle_count_task_detail_for_wms(task_name: str | None = None):
+    """Task header + result lines for Desktop drill-down (read-only)."""
+    task_name = (task_name or frappe.form_dict.get("task_name") or "").strip()
+    if not task_name:
+        frappe.throw(_("task_name is required."))
+
+    if not frappe.db.exists(TASK_DT, task_name):
+        frappe.throw(_("Task {0} not found.").format(task_name))
+
+    task_rows = frappe.get_all(
+        TASK_DT,
+        filters={"name": task_name},
+        fields=_task_fields_for_wms(include_batch=True),
+        limit_page_length=1,
+    )
+    task_row = task_rows[0] if task_rows else {}
+    result_dt = _task_result_dt()
+
+    line_rows = frappe.get_all(
+        result_dt,
+        filters={"parent": task_name},
+        fields=_result_line_fields_for_wms(result_dt),
+        order_by="idx asc",
+        limit_page_length=200000,
+    )
+
+    lines = [_serialize_task_line_for_wms(r) for r in (line_rows or [])]
+    batch_name = (task_row.get("batch") or "").strip() or None
+
+    return {
+        "ok": True,
+        "api_version": API_VERSION,
+        "batch_name": batch_name,
+        "task": _serialize_task_for_wms(task_row, len(lines)),
+        "lines": lines,
+        "line_count": len(lines),
     }
