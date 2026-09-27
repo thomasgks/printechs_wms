@@ -7,7 +7,7 @@ from frappe import _
 from frappe.utils import nowdate, nowtime, getdate
 
 
-API_VERSION = "desktop_stock_entry_v3_no_timestamp_mismatch"
+API_VERSION = "desktop_stock_entry_v4_historical_push"
 
 
 def _cstr(v) -> str:
@@ -70,20 +70,13 @@ def _tag_remarks(remarks: str, external_ref: str) -> str:
 
 
 def _resolve_warehouse(name: str | None, code: str | None) -> str:
-    name = _cstr(name)
-    code = _cstr(code)
+    from printechs_wms.api.warehouse import resolve_warehouse_or_throw
 
-    if name and frappe.db.exists("Warehouse", name):
-        return name
-
-    if code:
-        wh = frappe.db.get_value("Warehouse", {"code": code}, "name")
-        if wh:
-            return wh
-
-    frappe.throw(
-        _("Warehouse not found. Provide valid warehouse name or code. name={0}, code={1}")
-        .format(name or "-", code or "-")
+    return resolve_warehouse_or_throw(
+        name=_cstr(name),
+        code=_cstr(code),
+        warehouse_name=_cstr(name),
+        label=_("Warehouse"),
     )
 
 
@@ -142,6 +135,7 @@ def create_stock_entry_from_transfer_carton(payload=None):
     to_wh = _resolve_warehouse(payload.get("to_warehouse"), payload.get("to_warehouse_code"))
 
     receiving_wh = _cstr(payload.get("custom_receiving_warehouse"))
+    material_request = _cstr(payload.get("material_request"))
     remarks = _cstr(payload.get("remarks"))
     external_ref = _cstr(payload.get("external_ref"))
 
@@ -156,6 +150,11 @@ def create_stock_entry_from_transfer_carton(payload=None):
     # Idempotency
     existing = _find_existing_by_external_ref(external_ref)
     if existing:
+        from printechs_wms.api.stock_entry_material_request import ensure_stock_entry_material_request_header
+        from printechs_wms.api.wms_stock_movement import reconcile_stock_entry_transfer
+
+        mr_fix = ensure_stock_entry_material_request_header(existing, commit=True)
+        wms_fix = reconcile_stock_entry_transfer(existing)
         saved_recv = frappe.db.get_value("Stock Entry", existing, "custom_receiving_warehouse") \
             if frappe.db.has_column("Stock Entry", "custom_receiving_warehouse") else None
         return {
@@ -164,7 +163,9 @@ def create_stock_entry_from_transfer_carton(payload=None):
             "message": "Already exists (idempotent)",
             "stock_entry_no": existing,
             "external_ref": external_ref or None,
+            "material_request_header": mr_fix,
             "saved_custom_receiving_warehouse": saved_recv,
+            "wms": wms_fix,
         }
 
     se = frappe.new_doc("Stock Entry")
@@ -214,6 +215,13 @@ def create_stock_entry_from_transfer_carton(payload=None):
         if source_carton and hasattr(d, "source_carton"):
             d.source_carton = source_carton
 
+    from printechs_wms.api.stock_entry_material_request import apply_material_request_to_stock_entry
+    from printechs_wms.api.wms_stock_movement import validate_transfer_out_items
+
+    validate_transfer_out_items(items)
+
+    mr_link = apply_material_request_to_stock_entry(se, material_request, items)
+
     se.insert(ignore_permissions=True)
 
     # ✅ Force write receiving warehouse WITHOUT touching modified timestamp
@@ -227,8 +235,22 @@ def create_stock_entry_from_transfer_carton(payload=None):
             update_modified=False
         )
 
+    from printechs_wms.api.wms_stock_movement import apply_transfer_out
+
+    wms_result = apply_transfer_out(
+        company=company,
+        from_warehouse=from_wh,
+        items=items,
+        voucher_doctype="Stock Entry",
+        voucher_name=se.name,
+        external_ref=external_ref or se.name,
+        remarks=se.remarks,
+        strict_location=True,
+        material_request=material_request,
+        allow_historical=True,
+    )
+
     if submit_flag and se.docstatus == 0:
-        # No reload needed because we avoided updating modified timestamp
         se.submit()
 
     saved_recv = frappe.db.get_value("Stock Entry", se.name, "custom_receiving_warehouse") \
@@ -242,6 +264,9 @@ def create_stock_entry_from_transfer_carton(payload=None):
         "docstatus": se.docstatus,
         "submitted": bool(se.docstatus == 1),
         "external_ref": external_ref or None,
+        "material_request": (mr_link or {}).get("material_request") or material_request or None,
+        "material_request_header": mr_link,
+        "wms": wms_result,
         "resolved": {
             "from_warehouse": from_wh,
             "to_warehouse": to_wh,

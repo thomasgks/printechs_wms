@@ -1,7 +1,7 @@
 [
  {
   "charts": [],
-  "content": "[{\"id\":\"Opq7Y-W_uB\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Printechs WMS</span>\",\"col\":12}},{\"id\":\"jq5Vtc1GzL\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"WMS Relocation\",\"col\":3}},{\"id\":\"eOS2lgZis9\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Ledger Report\",\"col\":3}},{\"id\":\"tCQ_1XTHH2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Balance Report\",\"col\":3}},{\"id\":\"AIkp-VerIr\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Ledger\",\"col\":3}},{\"id\":\"cI8P1Bu5MR\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Event LOG\",\"col\":3}},{\"id\":\"7uJ_m7uQOc\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Wms Cycle Count Batch\",\"col\":3}},{\"id\":\"aykey8eu25\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Cycle Count Task\",\"col\":3}},{\"id\":\"uK-Bl7k0fZ\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Transfer Order\",\"col\":3}},{\"id\":\"TTb1SY2YKw\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"WMS ASN\",\"col\":3}},{\"id\":\"Vcq7_dqkZK\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bin Location\",\"col\":3}},{\"id\":\"iY3q7KP1Ha\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Warehouse\",\"col\":3}}]",
+  "content": "[{\"id\":\"Opq7Y-W_uB\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Printechs WMS</span>\",\"col\":12}},{\"id\":\"jq5Vtc1GzL\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"WMS Relocation\",\"col\":3}},{\"id\":\"wmsStockMovementReport\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Movement Report\",\"col\":3}},{\"id\":\"eOS2lgZis9\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Ledger Report\",\"col\":3}},{\"id\":\"tCQ_1XTHH2\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Balance Report\",\"col\":3}},{\"id\":\"AIkp-VerIr\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Stock Ledger\",\"col\":3}},{\"id\":\"cI8P1Bu5MR\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Event LOG\",\"col\":3}},{\"id\":\"7uJ_m7uQOc\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Wms Cycle Count Batch\",\"col\":3}},{\"id\":\"aykey8eu25\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Cycle Count Task\",\"col\":3}},{\"id\":\"uK-Bl7k0fZ\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Transfer Order\",\"col\":3}},{\"id\":\"TTb1SY2YKw\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"WMS ASN\",\"col\":3}},{\"id\":\"Vcq7_dqkZK\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Bin Location\",\"col\":3}},{\"id\":\"iY3q7KP1Ha\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Warehouse\",\"col\":3}}]",
   "custom_blocks": [],
   "docstatus": 0,
   "doctype": "Workspace",
@@ -35,6 +35,23 @@
     "parentfield": "shortcuts",
     "parenttype": "Workspace",
     "report_ref_doctype": "WMS Stock Balance",
+    "restrict_to_domain": null,
+    "stats_filter": null,
+    "type": "Report",
+    "url": null
+   },
+   {
+    "color": "Grey",
+    "doc_view": "List",
+    "format": null,
+    "icon": null,
+    "kanban_board": null,
+    "label": "Stock Movement Report",
+    "link_to": "WMS Stock Movement Report",
+    "parent": "Printechs WMS-Administrator",
+    "parentfield": "shortcuts",
+    "parenttype": "Workspace",
+    "report_ref_doctype": "WMS Stock Ledger Entry",
     "restrict_to_domain": null,
     "stats_filter": null,
     "type": "Report",
@@ -211,6 +228,7 @@
     "url": null
    }
   ],
-  "title": "Printechs WMS"
+  "title": "Printechs WMS",
+  "type": "Workspace"
  }
 ]

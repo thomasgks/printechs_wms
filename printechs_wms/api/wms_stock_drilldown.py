@@ -5,6 +5,16 @@ import frappe
 from frappe.utils import cstr, flt
 
 
+def _normalize_stock_balance_warehouse(warehouse: str | None) -> str | None:
+    warehouse = cstr(warehouse).strip() if warehouse else None
+    if not warehouse:
+        return None
+    from printechs_wms.api.warehouse import resolve_warehouse_docname
+
+    resolved = resolve_warehouse_docname(name=warehouse, code=warehouse, warehouse_name=warehouse)
+    return resolved or warehouse
+
+
 @frappe.whitelist()
 def get_item_location_carton_balance(item_code=None, warehouse=None, company=None, limit=500):
     if not item_code or not cstr(item_code).strip():
@@ -15,7 +25,7 @@ def get_item_location_carton_balance(item_code=None, warehouse=None, company=Non
         return {"ok": False, "rows": [], "count": 0, "message": f"DocType {DT} not found"}
 
     item_code = cstr(item_code).strip()
-    warehouse = cstr(warehouse).strip() if warehouse else None
+    warehouse = _normalize_stock_balance_warehouse(warehouse)
     company = cstr(company).strip() if company else None
     limit = int(limit or 500)
 

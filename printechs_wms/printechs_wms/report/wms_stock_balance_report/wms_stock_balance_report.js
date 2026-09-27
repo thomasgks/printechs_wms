@@ -13,7 +13,6 @@ frappe.query_reports["WMS Stock Balance Report"] = {
       label: "Warehouse",
       fieldtype: "Link",
       options: "Warehouse",
-      default: "Mohammed Abdullah Almousa Trading Company",
     },
     {
       fieldname: "item_code",

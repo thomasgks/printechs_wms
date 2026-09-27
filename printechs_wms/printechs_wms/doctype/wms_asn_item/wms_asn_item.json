@@ -47,14 +47,16 @@
    "fieldtype": "Float",
    "in_list_view": 1,
    "label": "Shipped Qty",
-   "reqd": 1
+   "reqd": 1,
+   "precision": 0
   },
   {
    "default": "0",
    "fieldname": "received_qty",
    "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Recvd Qty"
+   "label": "Recvd Qty",
+   "precision": 0
   },
   {
    "default": "0",

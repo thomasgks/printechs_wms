@@ -137,55 +137,23 @@ def _map_row(row, headers, field_map):
 
 
 def _resolve_from_warehouse(from_warehouse_code: str, from_warehouse: str) -> tuple[str, str]:
-    """
-    Resolve Warehouse for your environment.
-    Warehouse fields: code, warehouse_name, name (standard)
+    """Resolve active Warehouse. Returns (resolved_code, resolved_warehouse_docname)."""
+    from printechs_wms.api.warehouse import merge_active_warehouse_filters, resolve_warehouse_docname
 
-    Priority:
-      1) from_warehouse is exact Warehouse.name
-      2) from_warehouse_code matches Warehouse.code
-      3) from_warehouse matches Warehouse.warehouse_name
-      4) from_warehouse_code matches Warehouse.name
-      5) fallback any non-group warehouse
-
-    Returns: (resolved_code, resolved_warehouse_name)
-    """
     code = cstr(from_warehouse_code or "").strip()
     name = cstr(from_warehouse or "").strip()
 
-    # 1) exact Warehouse.name
-    if name and frappe.db.exists("Warehouse", name):
-        wh_code = frappe.db.get_value("Warehouse", name, "code") or code or name
-        return wh_code, name
+    wh = resolve_warehouse_docname(name=name, code=code, warehouse_name=name)
+    if wh:
+        wh_code = frappe.db.get_value("Warehouse", wh, "code") or code or wh
+        return wh_code, wh
 
-    # 2) by custom code
-    if code:
-        wh = frappe.db.get_value("Warehouse", {"code": code}, "name")
-        if wh:
-            return code, wh
-
-    # 3) by warehouse_name
-    if name:
-        wh = frappe.db.get_value("Warehouse", {"warehouse_name": name}, "name")
-        if wh:
-            wh_code = frappe.db.get_value("Warehouse", wh, "code") or code or wh
-            return wh_code, wh
-
-    # 4) treat code as name
-    if code and frappe.db.exists("Warehouse", code):
-        wh_code = frappe.db.get_value("Warehouse", code, "code") or code
-        return wh_code, code
-
-    # 5) fallback any non-group
-    any_wh = (
-        frappe.db.get_value("Warehouse", {"is_group": 0}, "name")
-        or frappe.db.get_value("Warehouse", {}, "name")
-    )
+    any_wh = frappe.db.get_value("Warehouse", merge_active_warehouse_filters(), "name")
     if any_wh:
         any_code = frappe.db.get_value("Warehouse", any_wh, "code") or code or any_wh
         return any_code, any_wh
 
-    frappe.throw("No Warehouse found in system.")
+    frappe.throw("No active Warehouse found in system.")
 
 
 def _find_existing_to(header: dict) -> str | None:

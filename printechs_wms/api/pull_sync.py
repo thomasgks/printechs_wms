@@ -33,10 +33,12 @@ def _warehouse_display_name(warehouse_docname: str | None) -> str | None:
 
 
 def _warehouse_docname_from_code(code: str | None) -> str | None:
-    """Find Warehouse docname by custom code field (your field is 'code')."""
+    """Find active Warehouse docname by custom code field (your field is 'code')."""
     if not code:
         return None
-    return frappe.db.get_value("Warehouse", {"code": code}, "name")
+    from printechs_wms.api.warehouse import resolve_warehouse_docname
+
+    return resolve_warehouse_docname(code=code)
 
 
 @frappe.whitelist()

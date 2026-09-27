@@ -97,13 +97,15 @@
    "default": "0",
    "fieldname": "total_ctn",
    "fieldtype": "Int",
-   "label": "Total CTN"
+   "label": "Total CTN",
+   "precision": 0
   },
   {
    "default": "0",
    "fieldname": "total_shipped_qty",
    "fieldtype": "Float",
-   "label": "Total Shipped Qty"
+   "label": "Total Shipped Qty",
+   "precision": 0
   },
   {
    "fieldname": "opened_by",
@@ -188,7 +190,8 @@
    "default": "0",
    "fieldname": "total_received_qty",
    "fieldtype": "Float",
-   "label": "Total Received Qty"
+   "label": "Total Received Qty",
+   "precision": 0
   },
   {
    "default": "0",

@@ -99,5 +99,32 @@
  "rows_threshold_for_grid_search": 20,
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "indexes": [
+  {
+   "fields": [
+    "company",
+    "item_code",
+    "warehouse"
+   ],
+   "unique": 0
+  },
+  {
+   "fields": [
+    "company",
+    "warehouse",
+    "item_code"
+   ],
+   "unique": 0
+  },
+  {
+   "fields": [
+    "company",
+    "qty",
+    "last_txn_datetime",
+    "modified"
+   ],
+   "unique": 0
+  }
+ ]
 }

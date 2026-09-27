@@ -201,6 +201,26 @@ def _release_asn_lock(lock_name: str | None):
         pass
 
 
+
+def _resolve_shipment_no_from_asn(asn_no: str) -> str | None:
+    """Use ASN references when a matching Shipment Master already exists."""
+    if not _has_field("Purchase Receipt", "custom_shipment_no"):
+        return None
+
+    asn = frappe.db.get_value(
+        ASN_DOCTYPE,
+        asn_no,
+        ["airway_bill", "wms_ref", "name"],
+        as_dict=True,
+    ) or {}
+
+    for candidate in (asn.get("airway_bill"), asn.get("wms_ref"), asn.get("name")):
+        shipment_no = (candidate or "").strip()
+        if shipment_no and frappe.db.exists("Shipment Master", shipment_no):
+            return shipment_no
+
+    return None
+
 # ============================================================
 # STATUS CHECK API
 # ============================================================
@@ -338,13 +358,22 @@ def receive_asn_and_create_purchase_receipt(
         # header set_warehouse (if field exists)
         _set_if_exists(pr, "set_warehouse", warehouse)
 
+        shipment_no = _resolve_shipment_no_from_asn(asn_no)
+        if shipment_no:
+            _set_if_exists(pr, "custom_shipment_no", shipment_no)
+
+        purchase_order = frappe.db.get_value(ASN_DOCTYPE, asn_no, "purchase_order")
+        if purchase_order:
+            _set_if_exists(pr, "purchase_order", purchase_order)
+
         for g in grouped.values():
             pr.append(
                 "items",
                 {
                     "item_code": g["item_code"],
                     "qty": g["qty"],
-                    "warehouse": warehouse,   # PR item warehouse
+                    "warehouse": warehouse,
+            "shipment_no": shipment_no,   # PR item warehouse
                     "rate": g["rate"],
                 }
             )
@@ -355,7 +384,8 @@ def receive_asn_and_create_purchase_receipt(
         except Exception:
             pass
 
-        # insert draft
+        # insert draft (shipment no can be filled later before submit)
+        pr.flags.ignore_mandatory = True
         pr.insert()
 
         # link back to ASN

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import frappe
 from frappe import _
+from frappe.utils import cint
 
 API_VERSION = "asn_receiving_v3"
 
@@ -210,7 +211,13 @@ def _row_receiving_status(shipped: float, recvd: float) -> str:
         return "Pending"
     if shipped > 0 and recvd + 1e-9 >= shipped:
         return "Received"
-    return "Partially Received"
+    return "Receiving"
+
+
+def _asn_header_status(*, any_received: bool, all_received: bool) -> str:
+    if all_received:
+        return "Completed"
+    return "Open"
 
 
 def _detect_header_total_field(doc, preferred_fieldname: str, label_keywords: list[str]) -> str | None:
@@ -281,12 +288,7 @@ def _recalc_header_totals_and_status(
     conversion_rate = _as_float(doc.get(F_CONVERSION_RATE), 0.0)
     total_amount_sar = total_amount * conversion_rate
 
-    if not any_received:
-        new_status = "Pending"
-    elif all_received:
-        new_status = "Received"
-    else:
-        new_status = "Partially Received"
+    new_status = _asn_header_status(any_received=any_received, all_received=all_received)
 
     header_updates = {}
 
@@ -333,6 +335,75 @@ def _recalc_header_totals_and_status(
 def _db_set(doctype: str, name: str, values: dict):
     for fieldname, val in values.items():
         frappe.db.set_value(doctype, name, fieldname, val, update_modified=False)
+
+
+
+def _resolve_matched_rows(doc, *, child_name=None, item_code=None, carton_id=None, carton_field=None):
+	"""Return matched child rows and a match mode label."""
+	child_name = _as_str(child_name)
+	item_code = _as_str(item_code)
+	carton_id = _as_str(carton_id)
+
+	if child_name:
+		row, mode = _find_row(doc, child_name=child_name, carton_field=carton_field)
+		return ([row], mode) if row else ([], mode)
+
+	if item_code and carton_id:
+		matches = _find_rows(doc, item_code=item_code, carton_id=carton_id, carton_field=carton_field)
+		if not matches:
+			return [], "row_not_found_for_item_code+carton_id"
+		if len(matches) == 1:
+			return matches, "item_code+carton_id"
+		return matches, "item_code+carton_id+distributed"
+
+	if item_code:
+		matches = _find_rows(doc, item_code=item_code, carton_id=None, carton_field=carton_field)
+		if len(matches) == 1:
+			return matches, "item_code_unique"
+		if len(matches) > 1:
+			return [], "multiple_rows_for_item_code_row_name_or_carton_id_required"
+		return [], "row_not_found_for_item_code"
+
+	return [], "insufficient_match_keys"
+
+
+def _apply_qty_to_matched_rows(
+	rows,
+	*,
+	shipped_field: str,
+	recvd_field: str,
+	child_meta,
+	qty: float,
+	mode: str,
+):
+	"""Apply increment/set qty across one or more child rows (handles duplicates)."""
+	updates = []
+	remaining = max(0.0, _as_float(qty, 0.0))
+	ordered = sorted(rows, key=lambda r: _as_int(getattr(r, "idx", 0), 0))
+
+	if mode == "set":
+		for row in ordered:
+			shipped = _as_float(row.get(shipped_field), 0.0)
+			alloc = min(shipped, remaining)
+			remaining -= alloc
+			new_recvd = alloc
+			current_recvd = _as_float(row.get(recvd_field), 0.0)
+			updates.append((row, current_recvd, new_recvd, shipped))
+		return updates
+
+	for row in ordered:
+		if remaining <= 0:
+			break
+		shipped = _as_float(row.get(shipped_field), 0.0)
+		current_recvd = _as_float(row.get(recvd_field), 0.0)
+		capacity = max(0.0, shipped - current_recvd)
+		add = min(capacity, remaining)
+		if add <= 0:
+			continue
+		remaining -= add
+		updates.append((row, current_recvd, current_recvd + add, shipped))
+
+	return updates
 
 
 @frappe.whitelist(methods=["POST", "PUT"])
@@ -419,7 +490,7 @@ def update_asn_received_qty(**kwargs):
                 })
                 continue
 
-            row, match_mode = _find_row(
+            matched_rows, match_mode = _resolve_matched_rows(
                 doc,
                 child_name=child_name or None,
                 item_code=item_code or None,
@@ -427,7 +498,7 @@ def update_asn_received_qty(**kwargs):
                 carton_field=carton_field,
             )
 
-            if not row:
+            if not matched_rows:
                 skipped.append({
                     "line": i,
                     "reason": match_mode,
@@ -435,36 +506,43 @@ def update_asn_received_qty(**kwargs):
                 })
                 continue
 
-            shipped = _as_float(row.get(shipped_field), 0.0)
-            current_recvd = _as_float(row.get(recvd_field), 0.0)
+            row_updates = _apply_qty_to_matched_rows(
+                matched_rows,
+                shipped_field=shipped_field,
+                recvd_field=recvd_field,
+                child_meta=child_meta,
+                qty=qty,
+                mode=mode,
+            )
 
-            new_recvd = current_recvd + qty if mode == "increment" else qty
+            if not row_updates:
+                skipped.append({
+                    "line": i,
+                    "reason": "no_capacity_for_qty",
+                    "line_data": line,
+                })
+                continue
 
-            if shipped > 0 and new_recvd > shipped:
-                new_recvd = shipped
+            for row, current_recvd, new_recvd, shipped in row_updates:
+                row_status = _row_receiving_status(shipped, new_recvd)
+                values = {recvd_field: new_recvd}
+                if child_meta.has_field(F_ROW_RECEIVING_STATUS):
+                    values[F_ROW_RECEIVING_STATUS] = row_status
+                if child_meta.has_field(F_ROW_CARTON_STATUS):
+                    values[F_ROW_CARTON_STATUS] = row_status
+                _db_set(row.doctype, row.name, values)
 
-            row_status = _row_receiving_status(shipped, new_recvd)
-
-            values = {recvd_field: new_recvd}
-
-            if child_meta.has_field(F_ROW_RECEIVING_STATUS):
-                values[F_ROW_RECEIVING_STATUS] = row_status
-            if child_meta.has_field(F_ROW_CARTON_STATUS):
-                values[F_ROW_CARTON_STATUS] = row_status
-
-            _db_set(row.doctype, row.name, values)
-
-            updated.append({
-                "line": i,
-                "match_mode": match_mode,
-                "row_name": row.name,
-                "item_code": row.get(F_ITEM_CODE),
-                "carton_id": _row_get(row, carton_field),
-                "shipped_qty": shipped,
-                "prev_recvd_qty": current_recvd,
-                "new_recvd_qty": new_recvd,
-                "row_status": row_status,
-            })
+                updated.append({
+                    "line": i,
+                    "match_mode": match_mode,
+                    "row_name": row.name,
+                    "item_code": row.get(F_ITEM_CODE),
+                    "carton_id": _row_get(row, carton_field),
+                    "shipped_qty": shipped,
+                    "prev_recvd_qty": current_recvd,
+                    "new_recvd_qty": new_recvd,
+                    "row_status": row_status,
+                })
 
         except Exception as e:
             errors.append({
@@ -522,3 +600,76 @@ def update_asn_received_qty(**kwargs):
         "skipped": skipped,
         "errors": errors,
     }
+
+@frappe.whitelist()
+def backfill_asn_received_for_unloaded_cartons(asn_name: str, dry_run: int = 1):
+	"""Set received_qty=shipped_qty on open lines when the carton was already unloaded."""
+	if not asn_name or not frappe.db.exists(ASN_DOCTYPE, asn_name):
+		frappe.throw(_("{0} not found: {1}").format(ASN_DOCTYPE, asn_name))
+
+	doc = frappe.get_doc(ASN_DOCTYPE, asn_name)
+	child_meta = _get_child_meta(doc)
+	shipped_field = _resolve_field(child_meta, SHIPPED_QTY_CANDIDATES, fallback_label_keywords=["shipped"])
+	recvd_field = _resolve_field(child_meta, RECV_QTY_CANDIDATES, fallback_label_keywords=["recvd", "received"])
+	carton_field = _resolve_field(child_meta, CARTON_ID_CANDIDATES, fallback_label_keywords=["carton", "box"])
+	rate_field = _get_rate_field(child_meta)
+
+	rows = doc.get(ASN_ITEM_PARENTFIELD) or []
+	by_carton: dict[str, list] = {}
+	for row in rows:
+		carton = _as_str(_row_get(row, carton_field))
+		if not carton:
+			continue
+		by_carton.setdefault(carton, []).append(row)
+
+	fixed = []
+	for carton, carton_rows in by_carton.items():
+		any_received = any(_as_float(r.get(recvd_field), 0.0) > 0 for r in carton_rows)
+		if not any_received:
+			continue
+		for row in carton_rows:
+			shipped = _as_float(row.get(shipped_field), 0.0)
+			recvd = _as_float(row.get(recvd_field), 0.0)
+			if shipped <= 0 or recvd + 1e-9 >= shipped:
+				continue
+			fixed.append({
+				"row_name": row.name,
+				"item_code": row.get(F_ITEM_CODE),
+				"carton_id": carton,
+				"shipped_qty": shipped,
+				"prev_recvd_qty": recvd,
+				"new_recvd_qty": shipped,
+			})
+
+	result = {
+		"asn": asn_name,
+		"dry_run": bool(cint(dry_run)),
+		"lines_fixed": len(fixed),
+		"fixed": fixed,
+	}
+
+	if cint(dry_run) or not fixed:
+		return result
+
+	for item in fixed:
+		row_status = _row_receiving_status(item["shipped_qty"], item["new_recvd_qty"])
+		values = {recvd_field: item["new_recvd_qty"]}
+		if child_meta.has_field(F_ROW_RECEIVING_STATUS):
+			values[F_ROW_RECEIVING_STATUS] = row_status
+		if child_meta.has_field(F_ROW_CARTON_STATUS):
+			values[F_ROW_CARTON_STATUS] = row_status
+		_db_set(child_meta.name, item["row_name"], values)
+
+	header = _recalc_header_totals_and_status(
+		frappe.get_doc(ASN_DOCTYPE, asn_name),
+		shipped_field=shipped_field,
+		recvd_field=recvd_field,
+		carton_field=carton_field,
+		rate_field=rate_field,
+	)
+	if header.get("header_updates"):
+		_db_set(ASN_DOCTYPE, asn_name, header["header_updates"])
+
+	frappe.db.commit()
+	result["header"] = header
+	return result
