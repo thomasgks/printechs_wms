@@ -151,6 +151,9 @@ doc_events = {
     "Item": {
         "before_save": "printechs_wms.api.item.update_custom_wms_modified"
     },
+    "Warehouse": {
+        "before_save": "printechs_wms.api.warehouse.update_custom_wms_modified"
+    },
     "User": {
         "before_save": "printechs_wms.api.user.update_custom_wms_modified"
     },

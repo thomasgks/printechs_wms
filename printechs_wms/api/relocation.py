@@ -87,18 +87,13 @@ def _date_from_posting_datetime(v: str | None) -> str | None:
 
 
 def _resolve_warehouse(name: str | None, code: str | None) -> str | None:
-    name = cstr(name).strip() if name else None
-    code = cstr(code).strip() if code else None
+    from printechs_wms.api.warehouse import resolve_warehouse_docname
 
-    if name and frappe.db.exists("Warehouse", name):
-        return name
-
-    if code:
-        wh = frappe.db.get_value("Warehouse", {"code": code}, "name")
-        if wh:
-            return wh
-
-    return None
+    return resolve_warehouse_docname(
+        name=cstr(name).strip() if name else None,
+        code=cstr(code).strip() if code else None,
+        warehouse_name=cstr(name).strip() if name else None,
+    )
 
 
 def _get_default_company() -> str | None:

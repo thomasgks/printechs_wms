@@ -1,0 +1,19 @@
+WMS AUTO-PICK CORRECTION — post-run status (2026-09-26)
+Source: doc/Transactions.xlsx
+
+APPLIED ON moosa.live
+  STE-scoped historical correction: MR-04445, 04449, 04673, 04676, 04679, 04744
+  Historical WMS on STE (missing transfer-out): MR-04687, MR-04830
+  Additional historical adjust: MR-04686, 04688, 04689, 04690, 04692, 04785, 04791, 04792, 04797, 04831
+
+STILL NEED DESKTOP/DATA REVIEW (cannot auto-align totals)
+  MR-2026-04832  STE MAT-STE-2026-21966  (export vs WMS totals)
+  MR-2026-04835  STE MAT-STE-2026-21967
+
+WAREHOUSE PHYSICAL AUDIT (after ERP fix — confirm desktop qty at bin)
+  Excel (recommended): doc/warehouse_auto_pick_audit.xlsx
+    Sheets: Instructions | AuditDetail (item name + qty) | LocationCarton (21 bins)
+  Detail TSV: doc/warehouse_auto_pick_audit.tsv  (38 lines, 12 MRs)
+  Checklist TSV: doc/warehouse_location_carton_checklist.tsv
+
+NO STE YET: 38 MRs — fix on Push, not ledger backfill

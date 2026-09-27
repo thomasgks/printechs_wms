@@ -183,6 +183,37 @@ function wms_render_batch_tasks_panel(frm) {
 	});
 }
 
+function wms_poll_batch_post_status(frm, attempt = 0) {
+	if (!frm || !frm.doc || !frm.doc.name) return;
+	if (attempt > 120) {
+		frappe.msgprint({
+			title: __("Posting"),
+			message: __("Batch post is still running. Please refresh the page in a few minutes."),
+			indicator: "orange",
+		});
+		return;
+	}
+	setTimeout(() => {
+		frappe.call({
+			method: "printechs_wms.api.cycle_count_batch_post.get_batch_post_status",
+			args: { batch_name: frm.doc.name },
+			callback: (r) => {
+				const m = r.message || {};
+				if (m.status === "Posted") {
+					frappe.show_alert({ message: __("Batch posted successfully."), indicator: "green" });
+					frm.reload_doc();
+					return;
+				}
+				if (m.posting_in_progress) {
+					wms_poll_batch_post_status(frm, attempt + 1);
+					return;
+				}
+				frm.reload_doc();
+			},
+		});
+	}, 5000);
+}
+
 frappe.ui.form.on("WMS Cycle Count Batch", {
 	refresh(frm) {
 		const status = frm.doc.status || "Draft";
@@ -288,32 +319,49 @@ frappe.ui.form.on("WMS Cycle Count Batch", {
 			});
 
 			frm.add_custom_button(__("Confirm & Post Batch"), () => {
-				frappe.confirm(__("Update WMS Stock Balance for this batch?"), () => {
-					frappe.call({
-						method: "printechs_wms.api.cycle_count_batch.confirm_and_post_batch",
-						args: { batch_name: frm.doc.name, create_stock_reconciliation: 0 },
-						freeze: true,
-						callback: (r) => {
-							const m = r.message || {};
-							if (!m.ok) {
+				frappe.confirm(
+					__(
+						"Update WMS Stock Balance for this batch? Large batches run in the background — do not click again while posting."
+					),
+					() => {
+						frappe.call({
+							method: "printechs_wms.api.cycle_count_batch.confirm_and_post_batch",
+							args: { batch_name: frm.doc.name, create_stock_reconciliation: 0 },
+							freeze: true,
+							freeze_message: __("Starting batch post..."),
+							callback: (r) => {
+								const m = r.message || {};
+								if (!m.ok) {
+									frappe.msgprint({
+										title: __("Error"),
+										message: m.message || __("Posting failed."),
+										indicator: "red",
+									});
+									return;
+								}
+								if (m.queued) {
+									frappe.msgprint({
+										title: __("Posting Started"),
+										message:
+											(m.message || __("Background posting started.")) +
+											`<br><span class="text-muted">${__("This page will refresh when posting completes.")}</span>`,
+										indicator: "blue",
+									});
+									wms_poll_batch_post_status(frm);
+									return;
+								}
 								frappe.msgprint({
-									title: __("Error"),
-									message: m.message || __("Posting failed."),
-									indicator: "red",
+									title: __("Posted"),
+									message: `Updated balances: <b>${m.updated_balances}</b><br>Cleared stale cartons: <b>${m.cleared_stale_cartons || 0}</b><br>SR: <b>${m.sr || "N/A"}</b>${
+										m.sr_note ? `<br><span class="text-muted">${m.sr_note}</span>` : ""
+									}`,
+									indicator: "green",
 								});
-								return;
-							}
-							frappe.msgprint({
-								title: __("Posted"),
-								message: `Updated balances: <b>${m.updated_balances}</b><br>Cleared stale cartons: <b>${m.cleared_stale_cartons || 0}</b><br>SR: <b>${m.sr || "N/A"}</b>${
-									m.sr_note ? `<br><span class="text-muted">${m.sr_note}</span>` : ""
-								}`,
-								indicator: "green",
-							});
-							frm.reload_doc();
-						},
-					});
-				});
+								frm.reload_doc();
+							},
+						});
+					}
+				);
 			}).addClass("btn-danger");
 		}
 	},

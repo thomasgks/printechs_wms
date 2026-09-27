@@ -171,30 +171,42 @@ def _fetch_barcodes_for_items(item_names: list[str]) -> dict[str, list[str]]:
 
 
 def _fetch_wms_item_totals(item_codes: list[str], company: str, warehouse: str) -> dict[str, dict]:
-    """Sum WMS Stock Balance qty per item for desktop item list."""
+    """Sum WMS Stock Balance qty per item for desktop item list (SQL aggregate)."""
     if not item_codes or not warehouse:
         return {}
 
-    rows = frappe.get_all(
-        "WMS Stock Balance",
-        filters={
-            "item_code": ["in", item_codes],
-            "warehouse": warehouse,
-            **({"company": company} if company else {}),
-        },
-        fields=["item_code", "qty", "reserved_qty"],
-        limit_page_length=200000,
+    from printechs_wms.api.stock_balance_indexes import normalize_stock_balance_warehouse
+
+    warehouse = normalize_stock_balance_warehouse(warehouse) or warehouse
+    placeholders = ", ".join(["%s"] * len(item_codes))
+    params = list(item_codes) + [warehouse]
+    company_clause = ""
+    if company:
+        company_clause = " AND company = %s"
+        params.append(company)
+
+    rows = frappe.db.sql(
+        f"""
+        SELECT item_code, SUM(qty) AS qty, SUM(reserved_qty) AS reserved_qty
+        FROM `tabWMS Stock Balance`
+        WHERE item_code IN ({placeholders})
+          AND warehouse = %s
+          {company_clause}
+        GROUP BY item_code
+        """,
+        params,
+        as_dict=True,
     )
     out: dict[str, dict] = {}
     for row in rows:
         code = row.get("item_code")
         if not code:
             continue
-        bucket = out.setdefault(code, {"qty": 0.0, "reserved_qty": 0.0})
-        bucket["qty"] += float(row.get("qty") or 0)
-        bucket["reserved_qty"] += float(row.get("reserved_qty") or 0)
+        out[code] = {
+            "qty": float(row.get("qty") or 0),
+            "reserved_qty": float(row.get("reserved_qty") or 0),
+        }
     return out
-
 
 @frappe.whitelist()
 def get_items_compact(
@@ -213,10 +225,12 @@ def get_items_compact(
     fields = _ensure_list(fields)
     attribute_filters = _ensure_dict(attribute_filters)
 
-    limit = cint(limit) or 100
+    include_wms_stock = cint(include_wms_stock or frappe.form_dict.get("include_wms_stock") or 0)
+    default_limit = 500 if include_wms_stock else 100
+    limit = cint(limit) or default_limit
+    limit = min(limit, 1000)
     offset = cint(offset) or 0
     flatten_attributes = cint(flatten_attributes) if str(flatten_attributes).strip() != "" else 1
-    include_wms_stock = cint(include_wms_stock or frappe.form_dict.get("include_wms_stock") or 0)
     warehouse = (warehouse or frappe.form_dict.get("warehouse") or frappe.form_dict.get("wms_warehouse") or "").strip()
     company = (company or frappe.form_dict.get("company") or frappe.defaults.get_user_default("Company") or "").strip()
 

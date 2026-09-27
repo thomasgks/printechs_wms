@@ -2,6 +2,7 @@
 import frappe
 from frappe.utils import cint, getdate
 import openpyxl
+from printechs_wms.api.asn_import_utils import apply_header_totals, merge_duplicate_asn_item_rows, summarize_item_rows
 
 
 ASN_DT = "WMS ASN"
@@ -123,8 +124,6 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
             # Currency / rate / totals
             _set_any(asn, ["currency"], d.get("currency"))
             _set_any(asn, ["conversion_rate"], d.get("conversion_rate"))
-            _set_any(asn, ["total_shipped_qty"], d.get("total_shipped_qty"))
-            _set_any(asn, ["total_ctn", "total_carton", "total_cartons"], d.get("total_ctn"))
 
             # Status
             _set_any(asn, ["status"], d.get("status") or "Draft")
@@ -169,13 +168,17 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
             # -----------------------------
             # ITEMS
             # -----------------------------
-            item_list = items_by_parent.get(excel_name, [])
+            raw_item_list = items_by_parent.get(excel_name, [])
+            item_list, merge_info = merge_duplicate_asn_item_rows(raw_item_list)
             if not item_list:
                 errors.append({
                     "name": excel_name,
                     "error": "No items found in 'WMS ASN Item' for this parent"
                 })
                 continue
+
+            item_stats = summarize_item_rows(item_list)
+            carton_audit = apply_header_totals(asn, d, item_stats)
 
             item_table_field = _get_child_table_fieldname(asn, ASN_ITEM_DT)
             if not item_table_field:
@@ -211,7 +214,12 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
 
             created.append({
                 "docname": asn.name,
-                "title": asn.get("title") or asn.get("asn_title") or ""
+                "title": asn.get("title") or asn.get("asn_title") or "",
+                "total_ctn": asn.get("total_ctn"),
+                "distinct_cartons": item_stats.get("distinct_cartons"),
+                "item_lines": item_stats.get("item_lines"),
+                "carton_audit": carton_audit,
+                "merge_info": merge_info,
             })
 
         except Exception as e:
@@ -292,25 +300,7 @@ def _get_child_table_fieldname(parent_doc, child_dt: str) -> str:
 
 
 def _resolve_warehouse(wh_link: str = "", wh_code: str = ""):
-    """
-    Returns (warehouse_name, warehouse_code)
-    - wh_link: Warehouse docname (Link)
-    - wh_code: Warehouse.code (custom field 'code')
-    """
-    wh_name = ""
-    wh_code_final = ""
+    """Return active (warehouse_docname, warehouse_code)."""
+    from printechs_wms.api.warehouse import resolve_warehouse_pair
 
-    # If link is provided and exists, take it and fetch code
-    if wh_link and frappe.db.exists("Warehouse", wh_link):
-        wh_name = wh_link
-        wh_code_final = frappe.db.get_value("Warehouse", wh_name, "code") or ""
-        return wh_name, wh_code_final
-
-    # If code is provided, find Warehouse by code
-    if wh_code:
-        wh_name = frappe.db.get_value("Warehouse", {"code": wh_code}, "name") or ""
-        if wh_name:
-            wh_code_final = wh_code
-            return wh_name, wh_code_final
-
-    return "", ""
+    return resolve_warehouse_pair(wh_link, wh_code)

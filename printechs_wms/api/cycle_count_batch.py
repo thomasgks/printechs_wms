@@ -41,6 +41,12 @@ RESULT_DT = "WMS Cycle Count Result"
 BATCH_DT = "WMS Cycle Count Batch"
 SUMMARY_CHILD_DT = "WMS Cycle Count Batch Summary"
 STOCK_BAL_DT = "WMS Stock Balance"
+DESKTOP_STOCK_SYNC_PAGE_SIZE = 5000
+
+
+def _normalize_stock_balance_warehouse(warehouse: str | None) -> str | None:
+	from printechs_wms.api.stock_balance_indexes import normalize_stock_balance_warehouse
+	return normalize_stock_balance_warehouse(warehouse)
 
 API_VERSION = "cycle_count_batch_v10_task_audit"
 
@@ -162,19 +168,22 @@ def _tasks_for_batch_processing(batch_name: str) -> list[str]:
     """
     Tasks included in Preview/Post: linked to batch, include_in_post=1, not already Posted.
     """
+    fields = ["name", "status"]
+    if _meta_has(TASK_DT, "include_in_post"):
+        fields.append("include_in_post")
+
     rows = frappe.get_all(
         TASK_DT,
         filters={"batch": batch_name},
-        fields=["name", "status"],
+        fields=fields,
         limit_page_length=200000,
     )
     names = []
     for row in rows:
         if (row.get("status") or "").strip() == "Posted":
             continue
-        if _meta_has(TASK_DT, "include_in_post"):
-            if not cint(frappe.db.get_value(TASK_DT, row.name, "include_in_post")):
-                continue
+        if _meta_has(TASK_DT, "include_in_post") and not cint(row.get("include_in_post", 1)):
+            continue
         names.append(row.name)
     return names
 
@@ -976,10 +985,22 @@ def sync_task_capture_only(payload: dict | None = None):
 
     if not company:
         frappe.throw(_("company is required."))
-    if not warehouse:
+    if not warehouse and not warehouse_code:
         frappe.throw(_("warehouse is required (ERP Warehouse link)."))
     if not warehouse_code:
         frappe.throw(_("warehouse_code is required."))
+
+    from printechs_wms.api.warehouse import resolve_warehouse_or_throw
+
+    warehouse = resolve_warehouse_or_throw(
+        name=warehouse,
+        code=warehouse_code,
+        warehouse_name=warehouse,
+        label=_("ERP Warehouse"),
+    )
+    resolved_code = frappe.db.get_value("Warehouse", warehouse, "code")
+    if resolved_code:
+        warehouse_code = resolved_code
 
     posting_date = task.get("posting_date") or today()
     status = _normalize_task_status(task.get("status") or "Completed")
@@ -1809,321 +1830,26 @@ def upload_cycle_count_verification_file(file_url=None, file_id=None, batch_name
 # API 5: Confirm & Post Batch
 # ---------------------------------------------------------------------
 @frappe.whitelist()
-def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=0, is_opening=0):
+def confirm_and_post_batch(batch_name=None, create_stock_reconciliation=0, is_opening=0, force_sync=0):
     """
     Update WMS Stock Balance and link Stock Reconciliation from upload (API 4).
 
-    Recommended flow:
-      1) load_actual_stock_preview
-      2) export_opening_valuation_template
-      3) upload_opening_valuation_file (creates SR)
-      4) confirm_and_post_batch (WMS balances; reuses linked SR)
-
-    create_stock_reconciliation=1 is a legacy fallback if SR was not uploaded first.
+    Large batches (>=2000 location rows) are posted in a background job with chunked
+    commits to avoid lock timeouts. force_sync=1 runs inline (console/admin only).
     """
-    create_stock_reconciliation = cint(create_stock_reconciliation or 0)
-    is_opening = cint(is_opening or 0)
+    from printechs_wms.api.cycle_count_batch_post import queue_or_run_confirm_and_post_batch
 
     if not batch_name:
         batch_name = frappe.local.form_dict.get("batch_name")
     if not batch_name:
         frappe.throw(_("batch_name is required"))
 
-    b = frappe.get_doc(BATCH_DT, batch_name)
-    status = (b.get("status") or "").strip()
-
-    # ------------------------------------------------------------------
-    # 0) If already posted -> stop here (prevents duplicate SR on re-click)
-    # ------------------------------------------------------------------
-    if status == "Posted":
-        existing_sr = (b.get("stock_reconciliation") or "").strip() if _meta_has(BATCH_DT, "stock_reconciliation") else ""
-        existing_sr = existing_sr or None
-        return {
-            "ok": True,
-            "api_version": API_VERSION,
-            "batch": batch_name,
-            "mode": "opening" if cint(is_opening) else "adjustment",
-            "message": "Batch already posted. No action taken.",
-            "updated_balances": 0,
-            "sr": existing_sr,
-        }
-
-    if status not in {"Draft", "Previewed", ""}:
-        frappe.throw(_("Batch is not in allowed status. Current status: {0}").format(status))
-
-    company = (b.get("company") or "").strip()
-    warehouse = (b.get("warehouse") or "").strip()
-    posting_date = b.get("posting_date") or nowdate()
-    posting_time = nowtime()
-
-    if not company:
-        frappe.throw(_("Batch.company is required"))
-    if not warehouse:
-        frappe.throw(_("Batch.warehouse is required"))
-
-    # Opening SR must exist (created by API 4)
-    opening_sr_field = "opening_stock_reconciliation"
-    opening_sr_name = b.get(opening_sr_field) if _meta_has(BATCH_DT, opening_sr_field) else None
-    if is_opening and not opening_sr_name:
-        frappe.throw(_("Opening mode: Upload valuation Excel and create Opening Stock SR first (API 4)."))
-
-    nowdt = now_datetime()
-
-    # ------------------------------------------------------------------
-    # 1) Load tasks + results
-    # ------------------------------------------------------------------
-    task_names = _tasks_for_batch_processing(batch_name)
-    if not task_names:
-        frappe.throw(_("No tasks selected for posting on this batch (check Include in Post and task status)."))
-
-    has_carton_id = _meta_has(RESULT_DT, "carton_id")
-    res_fields = ["name", "parent", "item_code", "bin_location", "counted_qty"]
-    if has_carton_id:
-        res_fields.append("carton_id")
-
-    res_rows = frappe.get_all(
-        RESULT_DT,
-        filters={"parent": ["in", task_names]},
-        fields=res_fields,
-        limit_page_length=200000,
+    return queue_or_run_confirm_and_post_batch(
+        batch_name,
+        create_stock_reconciliation=create_stock_reconciliation,
+        is_opening=is_opening,
+        force_sync=force_sync,
     )
-    if not res_rows:
-        frappe.throw(_("No result lines found for tasks in this batch."))
-
-    task_modes = {}
-    if _meta_has(TASK_DT, "count_mode"):
-        for t in frappe.get_all(
-            TASK_DT, filters={"name": ["in", task_names]}, fields=["name", "count_mode"]
-        ):
-            task_modes[t.name] = _normalize_count_mode(t.get("count_mode"))
-
-    reconciliation_items: set[str] = set()
-    adhoc_location_items: set[tuple[str, str]] = set()
-    for r in res_rows:
-        parent = r.get("parent")
-        mode = task_modes.get(parent, "reconciliation")
-        item_code = (r.get("item_code") or "").strip()
-        location = (r.get("bin_location") or "").strip()
-        if not item_code or not location:
-            continue
-        if mode == "reconciliation":
-            reconciliation_items.add(item_code)
-        else:
-            adhoc_location_items.add((item_code, location))
-
-    # ------------------------------------------------------------------
-    # 2) Update WMS Stock Balance by (item, location, carton)
-    # ------------------------------------------------------------------
-    wms_group = _build_wms_count_map(res_rows, has_carton_id)
-    cleared_stale_cartons, cleared_cartons = _zero_stale_wms_cartons(
-        company,
-        warehouse,
-        wms_group,
-        nowdt,
-        batch_name=batch_name,
-        reconciliation_items=reconciliation_items,
-        adhoc_location_items=adhoc_location_items,
-    )
-
-    updated_balances = 0
-    for (item_code, location, carton_key), counted_qty in wms_group.items():
-        carton = carton_key or None
-
-        if not frappe.db.exists("Item", item_code):
-            frappe.throw(_("Item not found: {0}").format(item_code))
-
-        filters = {"company": company, "warehouse": warehouse, "item_code": item_code, "location": location}
-        if carton:
-            filters["carton"] = carton
-        else:
-            filters["carton"] = ["in", ["", None]]
-
-        existing = frappe.db.get_value(STOCK_BAL_DT, filters, ["name", "qty"], as_dict=True)
-        previous_qty = flt(existing.get("qty")) if existing else 0.0
-
-        if existing:
-            frappe.db.set_value(STOCK_BAL_DT, existing.name, "qty", float(counted_qty), update_modified=False)
-            if _meta_has(STOCK_BAL_DT, "last_txn_datetime"):
-                frappe.db.set_value(STOCK_BAL_DT, existing.name, "last_txn_datetime", nowdt, update_modified=False)
-        else:
-            bal = frappe.get_doc(
-                {
-                    "doctype": STOCK_BAL_DT,
-                    "company": company,
-                    "warehouse": warehouse,
-                    "item_code": item_code,
-                    "location": location,
-                    "carton": carton,
-                    "qty": float(counted_qty),
-                }
-            )
-            if _meta_has(STOCK_BAL_DT, "last_txn_datetime"):
-                bal.last_txn_datetime = nowdt
-            bal.insert(ignore_permissions=True)
-
-        _write_cycle_count_ledger_set(
-            company=company,
-            warehouse=warehouse,
-            batch_name=batch_name,
-            item_code=item_code,
-            location=location,
-            carton=(carton or "").strip(),
-            previous_qty=previous_qty,
-            new_qty=float(counted_qty),
-            nowdt=nowdt,
-        )
-
-        updated_balances += 1
-
-    # ------------------------------------------------------------------
-    # 3) Stock Reconciliation (NO DUPLICATES + NO "NO CHANGE" POPUP)
-    # ------------------------------------------------------------------
-    sr_name = None
-    sr_note = None
-
-    existing_batch_sr = None
-    if _meta_has(BATCH_DT, "stock_reconciliation"):
-        existing_batch_sr = (b.get("stock_reconciliation") or "").strip() or None
-        if existing_batch_sr and not frappe.db.exists("Stock Reconciliation", existing_batch_sr):
-            existing_batch_sr = None
-
-    if is_opening:
-        # Opening: SR comes from API 4 only
-        sr_name = opening_sr_name
-        sr_note = "Opening mode: SR not created here; linked API4 Opening SR."
-
-        # optional: store it for easy reference in UI (do not override)
-        if _meta_has(BATCH_DT, "stock_reconciliation") and not existing_batch_sr and sr_name:
-            b.stock_reconciliation = sr_name
-
-    else:
-        # Adjustment:
-        if existing_batch_sr:
-            sr_name = existing_batch_sr
-            sr_note = "Adjustment SR already linked on batch; reused (no duplicate)."
-        else:
-            if create_stock_reconciliation:
-                # group by item_code
-                erp_group = {}
-                for r in res_rows:
-                    item_code = (r.get("item_code") or "").strip()
-                    qty = float(r.get("counted_qty") or 0)
-                    if not item_code:
-                        continue
-                    erp_group[item_code] = erp_group.get(item_code, 0.0) + qty
-
-                SR_DT = "Stock Reconciliation"
-                SR_ITEM_DT = "Stock Reconciliation Item"
-                sr_meta = frappe.get_meta(SR_DT)
-                sri_meta = frappe.get_meta(SR_ITEM_DT)
-
-                qty_field = "qty" if sri_meta.has_field("qty") else ("quantity" if sri_meta.has_field("quantity") else None)
-                if not qty_field:
-                    frappe.throw(_("Stock Reconciliation Item missing qty field"))
-
-                val_field = "valuation_rate" if sri_meta.has_field("valuation_rate") else ("rate" if sri_meta.has_field("rate") else None)
-
-                diff_acc = _pick_difference_account(opening_entry=0, company=company)
-                _ensure_account_exists(diff_acc)
-
-                sr = frappe.get_doc({"doctype": SR_DT})
-
-                if sr_meta.has_field("company"):
-                    sr.company = company
-                if sr_meta.has_field("posting_date"):
-                    sr.posting_date = posting_date
-                if sr_meta.has_field("posting_time"):
-                    sr.posting_time = posting_time
-
-                if sr_meta.has_field("purpose"):
-                    df = sr_meta.get_field("purpose")
-                    opts = [x.strip() for x in (df.options or "").split("\n") if x.strip()]
-                    preferred = "Stock Reconciliation"
-                    sr.purpose = preferred if preferred in opts else (opts[0] if opts else preferred)
-
-                if sr_meta.has_field("set_warehouse"):
-                    sr.set_warehouse = warehouse
-
-                if sr_meta.has_field("expense_account"):
-                    sr.expense_account = diff_acc
-                if sr_meta.has_field("difference_account"):
-                    sr.difference_account = diff_acc
-
-                sr.set("items", [])
-
-                item_totals = _aggregate_item_totals_from_batch(batch_name)
-
-                for item_code, counted_qty in erp_group.items():
-                    previous_qty = flt((item_totals.get(item_code) or {}).get("previous_qty"))
-                    vr = flt(_default_valuation_rate(item_code, warehouse, previous_qty))
-
-                    if flt(vr) <= 0:
-                        frappe.throw(
-                            _(
-                                "Valuation missing for Item {0} in Warehouse {1}. "
-                                "Export verification Excel, fill valuation_rate, and upload before posting."
-                            ).format(item_code, warehouse)
-                        )
-
-                    row = {"item_code": item_code, "warehouse": warehouse, qty_field: float(counted_qty)}
-                    if val_field:
-                        row[val_field] = vr
-                    sr.append("items", row)
-
-                # IMPORTANT: catch ERPNext "no change" error and SKIP SR
-                try:
-                    sr.insert(ignore_permissions=True)
-                    sr.submit()
-                    sr_name = sr.name
-                    sr_note = "Adjustment SR created."
-
-                    if _meta_has(BATCH_DT, "stock_reconciliation"):
-                        b.stock_reconciliation = sr_name
-
-                except Exception as e:
-                    msg = str(e) or ""
-                    if "None of the items have any change in quantity or value" in msg or "None of the items have any change" in msg:
-                        # Do not throw -> no popup, batch can still be posted
-                        sr_name = None
-                        sr_note = "Adjustment mode: ERPNext detected no change; SR skipped."
-                    else:
-                        raise
-
-            else:
-                sr_note = "Adjustment mode: create_stock_reconciliation=0; SR not created."
-
-    # ------------------------------------------------------------------
-    # 4) Post the batch + tasks
-    # ------------------------------------------------------------------
-    for tname in task_names:
-        if _meta_has(TASK_DT, "status"):
-            frappe.db.set_value(TASK_DT, tname, "status", "Posted", update_modified=False)
-        if _meta_has(TASK_DT, "sync_stage"):
-            frappe.db.set_value(TASK_DT, tname, "sync_stage", "Posted", update_modified=False)
-
-    if _meta_has(BATCH_DT, "status"):
-        pending = frappe.db.count(TASK_DT, {"batch": batch_name, "status": ["!=", "Posted"]})
-        b.status = "Previewed" if pending else "Posted"
-    if _meta_has(BATCH_DT, "posted_on"):
-        b.posted_on = nowdt
-    if _meta_has(BATCH_DT, "posted_by"):
-        b.posted_by = frappe.session.user
-
-    b.save(ignore_permissions=True)
-
-    return {
-        "ok": True,
-        "api_version": API_VERSION,
-        "batch": batch_name,
-        "mode": "opening" if is_opening else "adjustment",
-        "updated_balances": updated_balances,
-        "cleared_stale_cartons": cleared_stale_cartons,
-        "cleared_cartons": cleared_cartons,
-        "sr": sr_name,
-        "sr_note": sr_note,
-        "difference_account_opening": _pick_difference_account(opening_entry=1, company=company),
-        "difference_account_adjustment": _pick_difference_account(opening_entry=0, company=company),
-    }
 
 
 # ---------------------------------------------------------------------
@@ -2136,7 +1862,7 @@ def get_stock_balance_compact(
     item_code=None,
     last_txn_after=None,
     include_zero=0,
-    limit=500,
+    limit=None,
     offset=0,
 ):
     """
@@ -2150,13 +1876,13 @@ def get_stock_balance_compact(
     if not company:
         frappe.throw(_("company is required"))
 
-    limit = cint(limit) or 500
+    limit = cint(limit) or DESKTOP_STOCK_SYNC_PAGE_SIZE
     offset = cint(offset) or 0
     include_zero = cint(include_zero or 0)
 
     filters = {"company": company}
     if warehouse:
-        filters["warehouse"] = warehouse
+        filters["warehouse"] = _normalize_stock_balance_warehouse(warehouse)
     if item_code:
         filters["item_code"] = item_code
     if last_txn_after:
@@ -2342,7 +2068,7 @@ def get_item_wms_stock_for_desktop(
         frappe.throw(_("item_code is required"))
 
     company = (company or frappe.defaults.get_user_default("Company") or "").strip()
-    warehouse = cstr(warehouse).strip()
+    warehouse = _normalize_stock_balance_warehouse(warehouse)
     include_zero = cint(include_zero or 0)
 
     filters = {"item_code": item_code}
@@ -2519,7 +2245,7 @@ def get_cycle_count_batches_for_wms(
     warehouse_code = (warehouse_code or frappe.form_dict.get("warehouse_code") or "").strip()
     status = (status or frappe.form_dict.get("status") or "").strip()
     limit = cint(limit or frappe.form_dict.get("limit") or 100)
-    limit = max(1, min(limit, 500))
+    limit = max(1, min(limit, DESKTOP_STOCK_SYNC_PAGE_SIZE))
 
     if warehouse_code and not _meta_has(BATCH_DT, "warehouse_code"):
         frappe.throw(_("warehouse_code filter is not available on this site."))

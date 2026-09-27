@@ -2,6 +2,7 @@
 import frappe
 from frappe.utils import cint, getdate
 import openpyxl
+from printechs_wms.api.asn_import_utils import apply_header_totals, merge_duplicate_asn_item_rows, summarize_item_rows
 
 
 @frappe.whitelist()
@@ -76,8 +77,11 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
         asn_name = _s(d.get("name"))
         supplier = _s(d.get("supplier"))
 
-        if not asn_name:
-            errors.append({"name": "(blank)", "error": "Column 'name' is required in WMS ASN sheet"})
+        if not asn_name or asn_name in (".", "-"):
+            if asn_name:
+                errors.append({"name": asn_name, "error": "Ignored invalid header row (name must be a real ASN reference)"})
+            else:
+                errors.append({"name": "(blank)", "error": "Column 'name' is required in WMS ASN sheet"})
             continue
         if not supplier:
             errors.append({"name": asn_name, "error": "Supplier is required"})
@@ -147,10 +151,14 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
             # -----------------------------
             # ITEMS
             # -----------------------------
-            item_list = items_by_parent.get(asn_name, [])
+            raw_item_list = items_by_parent.get(asn_name, [])
+            item_list, merge_info = merge_duplicate_asn_item_rows(raw_item_list)
             if not item_list:
                 errors.append({"name": asn_name, "error": "No items found in 'WMS ASN Item' for this parent"})
                 continue
+
+            item_stats = summarize_item_rows(item_list)
+            carton_audit = apply_header_totals(asn, d, item_stats)
 
             for it in item_list:
                 item_code = _s(it.get("item_code"))
@@ -169,7 +177,7 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
                     _set_any(child, ["received_qty"], cint(received_qty))
 
                 _set_any(child, ["uom"], it.get("uom"))
-                _set_any(child, ["carton_id"], it.get("carton_id"))
+                _set_any(child, ["carton_id", "carton", "box_id"], it.get("carton_id") or it.get("carton") or it.get("box_id"))
                 _set_any(child, ["unit_cost"], it.get("unit_cost"))
                 _set_any(child, ["extended_cost"], it.get("extended_cost"))
 
@@ -178,13 +186,26 @@ def import_wms_asn_excel(file_url: str, submit: int = 0):
             if cint(submit):
                 asn.submit()
 
-            created.append(asn.name)
+            created.append({
+                "docname": asn.name,
+                "total_ctn": asn.get("total_ctn"),
+                "distinct_cartons": item_stats.get("distinct_cartons"),
+                "item_lines": item_stats.get("item_lines"),
+                "carton_audit": carton_audit,
+                "merge_info": merge_info,
+            })
 
         except Exception as e:
             errors.append({"name": asn_name, "error": str(e)})
 
     frappe.db.commit()
-    return {"status": "ok", "count": len(created), "created": created, "errors": errors}
+    return {
+        "status": "ok",
+        "count": len(created),
+        "created": created,
+        "errors": errors,
+        "note": "total_ctn is auto-filled from distinct carton_id when Excel header total_ctn is blank",
+    }
 
 
 # -----------------------------
@@ -230,20 +251,7 @@ def _set_any(doc, candidates, value):
             continue
 
 def _resolve_warehouse(wh_link: str = "", wh_code: str = ""):
-    """
-    Returns (warehouse_docname, warehouse_code)
-    - wh_link: Warehouse docname (e.g., 'Main Warehouse - MAATC')
-    - wh_code: Warehouse.code (your custom field 'code', e.g., 'WH-MAIN')
-    """
-    # Prefer link if valid
-    if wh_link and frappe.db.exists("Warehouse", wh_link):
-        code = frappe.db.get_value("Warehouse", wh_link, "code") or ""
-        return wh_link, code
+    """Return active (warehouse_docname, warehouse_code)."""
+    from printechs_wms.api.warehouse import resolve_warehouse_pair
 
-    # Else try code lookup
-    if wh_code:
-        name = frappe.db.get_value("Warehouse", {"code": wh_code}, "name") or ""
-        if name:
-            return name, wh_code
-
-    return "", ""
+    return resolve_warehouse_pair(wh_link, wh_code)

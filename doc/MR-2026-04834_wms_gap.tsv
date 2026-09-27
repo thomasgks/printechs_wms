@@ -1,0 +1,18 @@
+item_code	ste_qty	pick_qty_in_transactions	missing_pick_qty	action
+315118	49	0	49	Export desktop pick lines from tabStockTransaction
+315119	10	0	10	Export desktop pick lines from tabStockTransaction
+315124	57	0	57	Export desktop pick lines from tabStockTransaction
+315130	31	0	31	Export desktop pick lines from tabStockTransaction
+315131	4	0	4	Export desktop pick lines from tabStockTransaction
+315134	6	1	5	Export desktop pick lines from tabStockTransaction
+315135	30	0	30	Export desktop pick lines from tabStockTransaction
+315137	15	0	15	Export desktop pick lines from tabStockTransaction
+315138	11	0	11	Export desktop pick lines from tabStockTransaction
+315139	28	0	28	Export desktop pick lines from tabStockTransaction
+315140	23	0	23	Export desktop pick lines from tabStockTransaction
+315141	26	0	26	Export desktop pick lines from tabStockTransaction
+315142	9	0	9	Export desktop pick lines from tabStockTransaction
+315144	30	0	30	Export desktop pick lines from tabStockTransaction
+315146	30	0	30	Export desktop pick lines from tabStockTransaction
+315147	30	0	30	Export desktop pick lines from tabStockTransaction
+315148	30	13	17	Export desktop pick lines from tabStockTransaction

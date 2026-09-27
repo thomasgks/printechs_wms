@@ -6,6 +6,12 @@ import frappe
 def setup_warehouse_user_master():
 	_ensure_warehouse_user_role()
 	_ensure_user_custom_fields()
+	try:
+		from printechs_wms.api.warehouse import setup_warehouse_wms_fields
+
+		setup_warehouse_wms_fields()
+	except Exception:
+		pass
 
 
 def _ensure_warehouse_user_role():

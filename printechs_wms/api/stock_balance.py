@@ -11,6 +11,8 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt
 
+DESKTOP_STOCK_SYNC_PAGE_SIZE = 5000
+
 
 @frappe.whitelist()
 def get_item_location_carton_balance(item_code=None, warehouse=None, company=None, limit=500, include_zero=0):
@@ -18,13 +20,15 @@ def get_item_location_carton_balance(item_code=None, warehouse=None, company=Non
     Location breakdown for desktop Item screen (Show Location Breakdown).
     Maps drilldown rows to desktop column names.
     """
+    from printechs_wms.api.stock_balance_indexes import normalize_stock_balance_warehouse
     from printechs_wms.api.wms_stock_drilldown import get_item_location_carton_balance as _fetch
 
+    warehouse = normalize_stock_balance_warehouse(warehouse)
     resp = _fetch(
         item_code=item_code,
         warehouse=warehouse,
         company=company,
-        limit=limit,
+        limit=cint(limit) or 2000,
     )
     if not resp.get("ok"):
         return resp
@@ -68,7 +72,7 @@ def pull_stock_balances_for_wms(
     item_code=None,
     last_txn_after=None,
     include_zero=0,
-    limit=500,
+    limit=None,
     offset=0,
 ):
     """
@@ -76,13 +80,14 @@ def pull_stock_balances_for_wms(
     """
     from printechs_wms.api.cycle_count_batch import get_stock_balance_compact
 
+    page_limit = cint(limit) or DESKTOP_STOCK_SYNC_PAGE_SIZE
     return get_stock_balance_compact(
         company=company,
         warehouse=warehouse,
         item_code=item_code,
         last_txn_after=last_txn_after,
         include_zero=include_zero,
-        limit=limit,
+        limit=page_limit,
         offset=offset,
     )
 
@@ -94,7 +99,7 @@ def get_stock_balance_compact(
     item_code=None,
     last_txn_after=None,
     include_zero=0,
-    limit=500,
+    limit=None,
     offset=0,
 ):
     """Alias used by some desktop builds."""
@@ -120,3 +125,72 @@ def get_item_stock_totals(item_code=None, warehouse=None, company=None, include_
         company=company,
         include_zero=include_zero,
     )
+
+
+@frappe.whitelist()
+def refresh_item_stock_for_desktop(item_code=None, warehouse=None, company=None, include_zero=0):
+    """Live ERP stock for one item — desktop Refresh / Location Breakdown should call this."""
+    from printechs_wms.api.stock_balance_indexes import normalize_stock_balance_warehouse
+
+    item_code = (item_code or "").strip()
+    if not item_code:
+        frappe.throw(_("item_code is required"))
+
+    warehouse = normalize_stock_balance_warehouse(warehouse)
+    company = (company or frappe.defaults.get_user_default("Company") or "").strip() or None
+
+    data = get_item_stock_totals(
+        item_code=item_code,
+        warehouse=warehouse,
+        company=company,
+        include_zero=include_zero,
+    )
+    data["source"] = "erp_live"
+    data["replace_local_cache"] = True
+    return data
+
+
+@frappe.whitelist()
+def refresh_item_location_breakdown(item_code=None, warehouse=None, company=None, include_zero=0):
+    """Alias for desktop Refresh button."""
+    return refresh_item_stock_for_desktop(
+        item_code=item_code,
+        warehouse=warehouse,
+        company=company,
+        include_zero=include_zero,
+    )
+
+
+@frappe.whitelist()
+def sync_item_stock_balances(item_code=None, warehouse=None, company=None, include_zero=0):
+    """Pull all WMS balance rows for one item (single call)."""
+    from printechs_wms.api.stock_balance_indexes import normalize_stock_balance_warehouse
+
+    item_code = (item_code or "").strip()
+    if not item_code:
+        frappe.throw(_("item_code is required"))
+
+    warehouse = normalize_stock_balance_warehouse(warehouse)
+    company = (company or frappe.defaults.get_user_default("Company") or "").strip() or None
+
+    result = pull_stock_balances_for_wms(
+        company=company,
+        warehouse=warehouse,
+        item_code=item_code,
+        include_zero=include_zero,
+        limit=10000,
+        offset=0,
+    )
+    rows = result.get("rows") or []
+    total = sum(flt(r.get("qty")) for r in rows)
+    result.update(
+        {
+            "ok": True,
+            "item_code": item_code,
+            "source": "erp_live",
+            "replace_local_cache": True,
+            "total_balance_qty": total,
+            "count": len(rows),
+        }
+    )
+    return result

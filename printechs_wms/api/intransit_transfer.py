@@ -7,7 +7,7 @@ from frappe import _
 from frappe.utils import nowdate, nowtime, getdate, flt
 from erpnext.stock.doctype.stock_entry.stock_entry import make_stock_in_entry
 
-API_VERSION = "1.0.0"
+API_VERSION = "1.1.0_historical_push"
 
 # -------------------------------------------------------------------
 # Helpers
@@ -151,17 +151,9 @@ def _find_existing_by_external_ref(external_ref: str) -> str | None:
 
 
 def _resolve_mr_item_name(material_request: str, item_code: str) -> str | None:
-    """
-    Auto-detect MR item row name by item_code.
-    Baseline: returns first matching row.
-    """
-    if not material_request or not item_code:
-        return None
-    mr = frappe.get_doc("Material Request", material_request)
-    for row in mr.items:
-        if row.item_code == item_code:
-            return row.name
-    return None
+    from printechs_wms.api.stock_entry_material_request import resolve_mr_item_name
+
+    return resolve_mr_item_name(material_request, item_code)
 
 
 # -------------------------
@@ -282,6 +274,10 @@ def _create_receipt_from_intransit(in_transit_se: str, receiving_warehouse: str,
 
     _ensure_receipt_link(receipt, in_transit_se)
 
+    from printechs_wms.api.stock_entry_material_request import copy_material_request_header_from_stock_entry
+
+    copy_material_request_header_from_stock_entry(receipt, in_transit_se)
+
     receipt.insert(ignore_permissions=True)
 
     auto_submit = _as_int(_get_first(payload, "submit", default=1), 1)
@@ -313,7 +309,7 @@ def create_material_transfer_add_to_transit(payload=None):
       "submit": 1 (default 1)
       "external_ref": "WMS-UUID-..." (optional but recommended for idempotency)
       "items": [
-        {"item_code":"108226","qty":6,"material_request_item":"<rowname optional>"}
+        {"item_code":"108226","qty":6,"bin_location":"L001-...","carton_id":"CNWH12345","material_request_item":"<rowname optional>"}
       ]
     }
     """
@@ -343,11 +339,17 @@ def create_material_transfer_add_to_transit(payload=None):
     # Optional idempotency
     existing = _find_existing_by_external_ref(external_ref)
     if existing:
+        from printechs_wms.api.stock_entry_material_request import ensure_stock_entry_material_request_header
+        from printechs_wms.api.wms_stock_movement import reconcile_stock_entry_transfer
+
+        mr_fix = ensure_stock_entry_material_request_header(existing, source_name=in_transit_se, commit=True)
         return {
             "ok": True,
             "version": API_VERSION,
             "message": "Already exists (idempotent)",
             "stock_entry": existing,
+            "material_request_header": mr_fix,
+            "wms": reconcile_stock_entry_transfer(existing),
         }
 
     se = frappe.new_doc("Stock Entry")
@@ -397,17 +399,31 @@ def create_material_transfer_add_to_transit(payload=None):
         d.s_warehouse = from_wh
         d.t_warehouse = to_wh
 
-        # ✅ MR Linking (optional but recommended)
-        if material_request:
-            d.material_request = material_request
+        # Line MR linking handled centrally below (header + lines).
 
-            mr_item = _cstr(row.get("material_request_item"))
-            if not mr_item:
-                mr_item = _resolve_mr_item_name(material_request, item_code) or ""
-            if mr_item:
-                d.material_request_item = mr_item
+    from printechs_wms.api.stock_entry_material_request import apply_material_request_to_stock_entry
+    from printechs_wms.api.wms_stock_movement import validate_transfer_out_items
+
+    validate_transfer_out_items(items)
+
+    mr_link = apply_material_request_to_stock_entry(se, material_request, items)
 
     se.insert(ignore_permissions=True)
+
+    from printechs_wms.api.wms_stock_movement import apply_transfer_out
+
+    wms_result = apply_transfer_out(
+        company=company,
+        from_warehouse=from_wh,
+        items=items,
+        voucher_doctype="Stock Entry",
+        voucher_name=se.name,
+        external_ref=external_ref or se.name,
+        remarks=se.remarks,
+        strict_location=True,
+        material_request=material_request,
+        allow_historical=True,
+    )
 
     auto_submit = _as_int(payload.get("submit") if payload.get("submit") is not None else 1, 1)
     if auto_submit and se.docstatus == 0:
@@ -420,8 +436,10 @@ def create_material_transfer_add_to_transit(payload=None):
         "docstatus": se.docstatus,
         "message": "Created transfer to transit",
         "receiving_warehouse": receiving_wh or None,
-        "material_request": material_request or None,
+        "material_request": (mr_link or {}).get("material_request") or material_request or None,
+        "material_request_header": mr_link,
         "external_ref": external_ref or None,
+        "wms": wms_result,
     }
 
 
@@ -496,6 +514,27 @@ def end_transit_create_receipt(payload=None):
     # IDEMPOTENCY
     existing = _find_existing_receipt(in_transit_se)
     if existing:
+        from printechs_wms.api.stock_entry_material_request import ensure_stock_entry_material_request_header
+        from printechs_wms.api.wms_stock_movement import apply_transfer_in, ledger_applied_for_voucher
+
+        ensure_stock_entry_material_request_header(existing, source_name=in_transit_se, commit=True)
+        ensure_stock_entry_material_request_header(in_transit_se, commit=True)
+        receipt_doc = frappe.get_doc("Stock Entry", existing)
+        wms_items = p.get("items") or []
+        if not wms_items:
+            wms_items = [{"item_code": row.item_code, "qty": row.qty} for row in (receipt_doc.items or [])]
+        wms_result = None
+        if not ledger_applied_for_voucher("Stock Entry", existing):
+            wms_result = apply_transfer_in(
+                company=receipt_doc.company,
+                to_warehouse=receiving_warehouse,
+                items=wms_items,
+                voucher_doctype="Stock Entry",
+                voucher_name=existing,
+                external_ref=existing,
+                remarks=receipt_doc.remarks,
+                strict_location=False,
+            )
         return {
             "ok": True,
             "api_version": API_VERSION,
@@ -503,10 +542,28 @@ def end_transit_create_receipt(payload=None):
             "message": {"name": existing},  # ✅ Desktop reads this
             "data": {"name": existing},
             "receipt_stock_entry": existing,
+            "wms": wms_result,
         }
 
     # Create new receipt
     receipt_doc = _create_receipt_from_intransit(in_transit_se, receiving_warehouse, p)
+
+    from printechs_wms.api.wms_stock_movement import apply_transfer_in, ledger_applied_for_voucher
+
+    wms_items = p.get("items") or []
+    if not wms_items:
+        wms_items = [{"item_code": row.item_code, "qty": row.qty} for row in (receipt_doc.items or [])]
+
+    wms_result = apply_transfer_in(
+        company=receipt_doc.company,
+        to_warehouse=receiving_warehouse,
+        items=wms_items,
+        voucher_doctype="Stock Entry",
+        voucher_name=receipt_doc.name,
+        external_ref=receipt_doc.name,
+        remarks=receipt_doc.remarks,
+        strict_location=False,
+    )
 
     return {
         "ok": True,
@@ -516,4 +573,5 @@ def end_transit_create_receipt(payload=None):
         "data": {"name": receipt_doc.name},
         "stock_entry": receipt_doc.name,
         "receipt_stock_entry": receipt_doc.name,
+        "wms": wms_result,
     }
